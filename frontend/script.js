@@ -3,7 +3,7 @@ var python_code = "class Solution:\n    def twoSum(self, nums, target):\n       
 var cpp_code = "#include<vector>\nusing namespace std;\nclass Solution {\npublic:\n    vector<int> twoSum(vector<int>& nums, int target) {\n        return {0, 1};\n    }\n};";
 
 // code to run when page loads
-window.onload = function () { 
+window.onload = function () {
     console.log("page loaded");
 
     var btn = document.getElementById("run-btn");

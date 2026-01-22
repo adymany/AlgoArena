@@ -5,31 +5,350 @@ import tarfile
 import io
 import os
 import threading
+import psycopg2
+import time
+import json
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 CORS(app) 
 
-# this connects to docker desktop
 client = docker.from_env()
 
+# Database Connection
+def get_db_connection():
+    try:
+        conn = psycopg2.connect(
+            host="localhost",
+            database="contest_db",
+            user="user",
+            password="password",
+            port="5432"
+        )
+        return conn
+    except Exception as e:
+        print("Database connection failed:", e)
+        return None
+
+# Helper to log and execute queries
+def execute_query(cur, query, params=None):
+    if params:
+        print(f"\n[SQL QUERY]: {query} | Params: {params}")
+        cur.execute(query, params)
+    else:
+        print(f"\n[SQL QUERY]: {query}")
+        cur.execute(query)
+
+# Initialize Database
+def init_db():
+    retries = 5
+    while retries > 0:
+        conn = get_db_connection()
+        if conn:
+            try:
+                cur = conn.cursor()
+                
+                # Users Table
+                execute_query(cur, """
+                    CREATE TABLE IF NOT EXISTS users (
+                        id SERIAL PRIMARY KEY,
+                        username VARCHAR(50) UNIQUE NOT NULL,
+                        password_hash TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+
+                # Problems Table
+                execute_query(cur, """
+                    CREATE TABLE IF NOT EXISTS problems (
+                        id SERIAL PRIMARY KEY,
+                        slug VARCHAR(50) UNIQUE NOT NULL,
+                        title VARCHAR(100) NOT NULL,
+                        description TEXT NOT NULL,
+                        difficulty VARCHAR(10) DEFAULT 'Easy',
+                        templates JSONB DEFAULT '{}'
+                    );
+                """)
+                
+                # MIGRATION: Ensure 'templates' column exists for existing tables
+                try:
+                   execute_query(cur, "ALTER TABLE problems ADD COLUMN IF NOT EXISTS templates JSONB DEFAULT '{}'")
+                   conn.commit()
+                except Exception as ex:
+                   print("Migration warning (templates):", ex)
+                   conn.rollback()
+
+
+                # Submissions Table
+                execute_query(cur, """
+                    CREATE TABLE IF NOT EXISTS submissions (
+                        id SERIAL PRIMARY KEY,
+                        user_id INTEGER REFERENCES users(id),
+                        language VARCHAR(10) NOT NULL,
+                        code TEXT NOT NULL,
+                        problem_id VARCHAR(50),
+                        status VARCHAR(20),
+                        output TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+
+                # Chat Sessions Table
+                execute_query(cur, """
+                    CREATE TABLE IF NOT EXISTS chat_sessions (
+                        id SERIAL PRIMARY KEY,
+                        user_id INTEGER REFERENCES users(id),
+                        problem_id VARCHAR(50),
+                        history JSONB DEFAULT '[]',
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(user_id, problem_id)
+                    );
+                """)
+
+                conn.commit()
+                
+                # Seed Problems
+                seed_problems(cur)
+                conn.commit()
+                
+                cur.close()
+                conn.close()
+                print("Database initialized successfully.")
+                return
+            except Exception as e:
+                print("Error initializing database:", e)
+        else:
+            print(f"Waiting for database... ({retries} retries left)")
+            time.sleep(2)
+            retries -= 1
+
+def seed_problems(cur):
+    problems = [
+        ("two_sum", "Two Sum", """
+<p>Given an array of integers <code>nums</code> and an integer <code>target</code>, return indices of the two numbers such that they add up to <code>target</code>.</p>
+<p>You may assume that each input would have <strong>exactly one solution</strong>, and you may not use the same element twice.</p>
+<p>You can return the answer in any order.</p>
+
+<div class="example-box">
+    <div class="example-title">Example 1:</div>
+    <p><span class="example-label">Input:</span> nums = [2,7,11,15], target = 9</p>
+    <p><span class="example-label">Output:</span> [0,1]</p>
+    <p style="color: #64748b; font-size: 0.85em;">Explanation: Because nums[0] + nums[1] == 9, we return [0, 1].</p>
+</div>
+
+<div class="example-box">
+    <div class="example-title">Example 2:</div>
+    <p><span class="example-label">Input:</span> nums = [3,2,4], target = 6</p>
+    <p><span class="example-label">Output:</span> [1,2]</p>
+</div>
+
+<div class="example-box">
+    <div class="example-title">Example 3:</div>
+    <p><span class="example-label">Input:</span> nums = [3,3], target = 6</p>
+    <p><span class="example-label">Output:</span> [0,1]</p>
+</div>
+""", "Easy", json.dumps({
+    "python": "class Solution:\n    def twoSum(self, nums, target):\n        ",
+    "cpp": "class Solution {\npublic:\n    vector<int> twoSum(vector<int>& nums, int target) {\n        \n    }\n};"
+})),
+
+        ("palindrome_number", "Palindrome Number", """
+<p>Given an integer <code>x</code>, return <code>true</code> if <code>x</code> is a <strong>palindrome</strong>, and <code>false</code> otherwise.</p>
+""", "Easy", json.dumps({
+    "python": "class Solution:\n    def isPalindrome(self, x):\n        ",
+    "cpp": "class Solution {\npublic:\n    bool isPalindrome(int x) {\n        \n    }\n};"
+})),
+
+        ("valid_parentheses", "Valid Parentheses", """
+<p>Given a string <code>s</code> containing just the characters <code>'('</code>, <code>')'</code>, <code>'{'</code>, <code>'}'</code>, <code>'['</code> and <code>']'</code>, determine if the input string is valid.</p>
+""", "Medium", json.dumps({
+    "python": "class Solution:\n    def isValid(self, s):\n        ",
+    "cpp": "class Solution {\npublic:\n    bool isValid(string s) {\n        \n    }\n};"
+})),
+
+        ("fibonacci_number", "Fibonacci Number", """
+<p>The <strong>Fibonacci numbers</strong>, commonly denoted <code>F(n)</code> form a sequence, called the <strong>Fibonacci sequence</strong>, such that each number is the sum of the two preceding ones, starting from <code>0</code> and <code>1</code>.</p>
+""", "Easy", json.dumps({
+    "python": "class Solution:\n    def fib(self, n):\n        ",
+    "cpp": "class Solution {\npublic:\n    int fib(int n) {\n        \n    }\n};"
+})),
+
+        ("reverse_string", "Reverse String", """
+<p>Write a function that reverses a string. The input string is given as an array of characters <code>s</code>.</p>
+<p>You must do this by modifying the input array <strong>in-place</strong> with <code>O(1)</code> extra memory.</p>
+""", "Easy", json.dumps({
+    "python": "class Solution:\n    def reverseString(self, s):\n        \"\"\"\n        Do not return anything, modify s in-place instead.\n        \"\"\"\n        ",
+    "cpp": "class Solution {\npublic:\n    void reverseString(vector<char>& s) {\n        \n    }\n};"
+}))
+    ]
+    
+    print("\n--- SEEDING PROBLEMS ---")
+    for p in problems:
+        # Check if exists first to potentially update it
+        slug = p[0]
+        execute_query(cur, "SELECT id FROM problems WHERE slug = %s", (slug,))
+        exists = cur.fetchone()
+        
+        if exists:
+            # Update description AND templates if it exists
+            print(f"Updating content for: {slug}")
+            execute_query(cur, "UPDATE problems SET title = %s, description = %s, difficulty = %s, templates = %s WHERE slug = %s", (p[1], p[2], p[3], p[4], slug))
+        else:
+            print(f"Creating new problem: {slug}")
+            execute_query(cur, "INSERT INTO problems (slug, title, description, difficulty, templates) VALUES (%s, %s, %s, %s, %s)", p)
+    print("--- SEEDING COMPLETE ---\n")
+
+# Start DB initialization synchronously
+init_db()
+
+# --- Auth Endpoints ---
+@app.route("/api/v1/register", methods=["POST"])
+def register():
+    data = request.json
+    username = data.get("username")
+    password = data.get("password")
+    
+    if not username or not password:
+        return jsonify({"error": "Username and password required"}), 400
+        
+    hashed = generate_password_hash(password)
+    
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, "INSERT INTO users (username, password_hash) VALUES (%s, %s) RETURNING id", (username, hashed))
+        user_id = cur.fetchone()[0]
+        conn.commit()
+        print(f"User created: {username} (ID: {user_id})")
+        return jsonify({"message": "User created", "user_id": user_id}), 201
+    except psycopg2.errors.UniqueViolation:
+        conn.rollback()
+        print(f"Registration failed: Username {username} exists")
+        return jsonify({"error": "Username already exists"}), 409
+    except Exception as e:
+        print(f"Registration error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route("/api/v1/login", methods=["POST"])
+def login():
+    data = request.json
+    username = data.get("username")
+    password = data.get("password")
+    print(f"Login attempt for: {username}")
+    
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, "SELECT id, password_hash FROM users WHERE username = %s", (username,))
+        user = cur.fetchone()
+        
+        if user and check_password_hash(user[1], password):
+            print(f"Login success: {username}")
+            return jsonify({"message": "Login successful", "user_id": user[0], "username": username}), 200
+        else:
+            print(f"Login failed: {username}")
+            return jsonify({"error": "Invalid credentials"}), 401
+    finally:
+        conn.close()
+
+# --- Problems Endpoints ---
+@app.route("/api/v1/problems", methods=["GET"])
+def get_problems():
+    print("Fetching problem list...")
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, "SELECT slug, title, difficulty FROM problems ORDER BY id ASC")
+        problems = [{"slug": row[0], "title": row[1], "difficulty": row[2]} for row in cur.fetchall()]
+        return jsonify(problems)
+    finally:
+        conn.close()
+
+@app.route("/api/v1/problems/<slug>", methods=["GET"])
+def get_problem(slug):
+    print(f"Fetching problem details: {slug}")
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, "SELECT slug, title, description, difficulty, templates FROM problems WHERE slug = %s", (slug,))
+        row = cur.fetchone()
+        if row:
+            return jsonify({
+                "slug": row[0], 
+                "title": row[1], 
+                "description": row[2], 
+                "difficulty": row[3],
+                "templates": row[4]
+            })
+        return jsonify({"error": "Problem not found"}), 404
+    finally:
+        conn.close()
+
+# --- Chat Endpoints ---
+@app.route("/api/v1/chat/save", methods=["POST"])
+def save_chat():
+    data = request.json
+    user_id = data.get("user_id")
+    problem_id = data.get("problem_id")
+    history = data.get("history") 
+    
+    print(f"Saving chat for User {user_id}, Problem {problem_id}")
+    
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        history_json = json.dumps(history)
+        execute_query(cur, """
+            INSERT INTO chat_sessions (user_id, problem_id, history) 
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id, problem_id) 
+            DO UPDATE SET history = EXCLUDED.history, updated_at = CURRENT_TIMESTAMP
+        """, (user_id, problem_id, history_json))
+        conn.commit()
+        return jsonify({"status": "saved"}), 200
+    except Exception as e:
+        print(f"Save chat error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route("/api/v1/chat/<problem_id>", methods=["GET"])
+def get_chat(problem_id):
+    user_id = request.args.get("user_id")
+    print(f"Loading chat for User {user_id}, Problem {problem_id}")
+
+    if not user_id:
+        return jsonify([])
+
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, "SELECT history FROM chat_sessions WHERE user_id = %s AND problem_id = %s", (user_id, problem_id))
+        row = cur.fetchone()
+        if row:
+             return jsonify(row[0]) 
+        return jsonify([])
+    finally:
+        conn.close()
+
+# --- Execution Endpoint ---
 @app.route("/api/v1/execute", methods=["POST"])
 def run_code():
-    print("got a request!")
-    
-    # get data from json
     data = request.json
     lang = data["language"]
     user_code = data["code"]
     pid = data.get("problem_id", "")
+    user_id = data.get("user_id")
     
-    # default python filename
+    print(f"Execution request: Lang={lang}, Problem={pid}, User={user_id}")
+    
     fname = "solution.py"
     cmd = ""
 
-    # check language
     if lang == "python":
         fname = "solution.py"
-        # run python driver if possible
         if pid != "":
             cmd = "python3 -u driver.py < test_data.txt"
         else:
@@ -38,52 +357,42 @@ def run_code():
     elif lang == "cpp":
         fname = "solution.cpp"
         if pid != "":
-            # compile and run
             cmd = "g++ -o solution driver.cpp -I/home/sandbox && ./solution < test_data.txt"
         else:
             cmd = "g++ -o solution solution.cpp && ./solution"
     else:
         return jsonify({"error": "bad language"})
 
-    # config for container
     my_config = {
         "image": "judger:latest",
-        "command": ["/bin/bash", "-c", "sleep 600"], # sleep so we can copy files
+        "command": ["/bin/bash", "-c", "sleep 600"],
         "mem_limit": "128m",
-        "network_mode": "none", # security
+        "network_mode": "none",
         "detach": True
     }
 
     try:
-        # start container
         con = client.containers.create(**my_config)
         con.start()
         
-        # --- File Copying Stuff ---
-        # i used tarfile because docker needs it
         stream = io.BytesIO()
         t = tarfile.open(fileobj=stream, mode='w')
         
-        # add user code
         info = tarfile.TarInfo(name=fname)
         b_code = user_code.encode('utf-8')
         info.size = len(b_code)
         t.addfile(info, io.BytesIO(b_code))
         
-        # add driver files if needed
         if pid != "":
-            # path to problem folder
             p_path = os.path.join("backend", "problems", pid)
             if not os.path.exists(p_path):
                 p_path = os.path.join("problems", pid)
-                
-            # determine driver filename
+             
             if lang == "python":
                 d_name = "driver.py"
             else:
                 d_name = "driver.cpp"
                 
-            # read driver file
             if os.path.exists(os.path.join(p_path, d_name)):
                 with open(os.path.join(p_path, d_name), "rb") as f:
                     d_data = f.read()
@@ -91,7 +400,6 @@ def run_code():
                     info2.size = len(d_data)
                     t.addfile(info2, io.BytesIO(d_data))
 
-            # read test data
             if os.path.exists(os.path.join(p_path, "test_data.txt")):
                  with open(os.path.join(p_path, "test_data.txt"), "rb") as f:
                     t_data = f.read()
@@ -102,16 +410,11 @@ def run_code():
         t.close()
         stream.seek(0)
         con.put_archive("/home/sandbox", stream)
-        # ---------------------------
-
-        # --- Running the code ---
-        
-        # i found this timeout logic on stackoverflow mostly
+       
         res = {"code": None, "msg": "", "is_tle": False}
         
         def run_thread():
             try:
-                # runs the command
                 c, out = con.exec_run(
                     cmd=f"/bin/bash -c '{cmd.replace('\'', '\'\\\'')}'",
                     workdir="/home/sandbox"
@@ -124,19 +427,15 @@ def run_code():
         worker = threading.Thread(target=run_thread)
         worker.start()
         
-        # wait 2 seconds
         worker.join(timeout=2)
         
         if worker.is_alive():
-            print("timeout happened!")
             res["is_tle"] = True
             try:
-                con.kill() # stop it
+                con.kill() 
             except:
                 pass
             worker.join()
-            
-            # remove container
             con.remove(force=True)
             return jsonify({
                 "status": "TLE", 
@@ -144,12 +443,30 @@ def run_code():
                 "exit_code": 124
             })
             
-        # cleanup
         con.remove(force=True)
         
+        # Save submission
+        execution_output = res["msg"].decode('utf-8') if res["msg"] else ""
+        exec_status = "Executed" if res["code"] == 0 else "Error"
+        
+        if user_id: 
+            try:
+                conn = get_db_connection()
+                if conn:
+                    cur = conn.cursor()
+                    execute_query(cur, 
+                        "INSERT INTO submissions (user_id, language, code, problem_id, status, output) VALUES (%s, %s, %s, %s, %s, %s)",
+                        (user_id, lang, user_code, pid, exec_status, execution_output)
+                    )
+                    conn.commit()
+                    conn.close()
+                    print("Submission saved to DB")
+            except Exception as e:
+                print("Failed to save submission:", e)
+        
         return jsonify({
-            "status": "Executed",
-            "output": res["msg"].decode('utf-8') if res["msg"] else "",
+            "status": exec_status,
+            "output": execution_output,
             "exit_code": res["code"]
         })
 
@@ -157,6 +474,5 @@ def run_code():
         print("Error:", e)
         return jsonify({"error": str(e)})
 
-if __name__ == "__main__":
-    print("Server starting on 9000...")
-    app.run(host="0.0.0.0", port=9000)
+print("Server starting on 9000...")
+app.run(host="0.0.0.0", port=9000)

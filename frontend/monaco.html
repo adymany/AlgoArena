@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple Monaco Editor</title>
+    <style>
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #1e1e1e;
+            /* Match vs-dark theme background */
+        }
+
+        #editor-container {
+            width: 100%;
+            height: 100vh;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="editor-container"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js"></script>
+
+    <script>
+
+        require.config({ paths: { 'vs': 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' } });
+
+        require(['vs/editor/editor.main'], function () {
+
+            // Register a completion provider for Python
+            monaco.languages.registerCompletionItemProvider('python', {
+                provideCompletionItems: function (model, position) {
+                    var word = model.getWordUntilPosition(position);
+                    var range = {
+                        startLineNumber: position.lineNumber,
+                        endLineNumber: position.lineNumber,
+                        startColumn: word.startColumn,
+                        endColumn: word.endColumn
+                    };
+
+                    // 1. Standard Python Keywords & Snippets
+                    var suggestions = [
+                        {
+                            label: 'def',
+                            kind: monaco.languages.CompletionItemKind.Snippet,
+                            insertText: 'def ${1:name}(${2:params}):\n\t${3:pass}',
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            range: range,
+                            detail: 'Function definition'
+                        },
+                        {
+                            label: 'print',
+                            kind: monaco.languages.CompletionItemKind.Function,
+                            insertText: 'print(${1:val})',
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            range: range,
+                            detail: 'Print to console'
+                        },
+                        {
+                            label: 'if',
+                            kind: monaco.languages.CompletionItemKind.Snippet,
+                            insertText: 'if ${1:condition}:\n\t${2:pass}',
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            range: range,
+                            detail: 'If statement'
+                        },
+                        {
+                            label: 'for',
+                            kind: monaco.languages.CompletionItemKind.Snippet,
+                            insertText: 'for ${1:item} in ${2:items}:\n\t${3:pass}',
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            range: range,
+                            detail: 'For loop'
+                        },
+                        {
+                            label: 'class',
+                            kind: monaco.languages.CompletionItemKind.Snippet,
+                            insertText: 'class ${1:ClassName}:\n\tdef __init__(self, ${2:params}):\n\t\t${3:pass}',
+                            insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
+                            range: range,
+                            detail: 'Class definition'
+                        }
+                    ];
+
+                    // 2. Smart Scanner: Dynamic Suggestions from Document Content
+                    // This scans the text you've written to find variables and function names
+                    var text = model.getValue();
+                    var matches = text.match(/[a-zA-Z_]\w*/g) || [];
+                    var uniqueWords = Array.from(new Set(matches));
+
+                    uniqueWords.forEach(function (w) {
+                        // Avoid adding obvious duplicates if they are already in keys (simple check)
+                        if (w !== word.word && !['def', 'if', 'for', 'class', 'print'].includes(w)) {
+                            suggestions.push({
+                                label: w,
+                                kind: monaco.languages.CompletionItemKind.Variable,
+                                insertText: w,
+                                range: range,
+                                detail: 'Variable/Word' // Hint so user knows it's from here
+                            });
+                        }
+                    });
+
+                    return { suggestions: suggestions };
+                }
+            });
+
+            var editor = monaco.editor.create(document.getElementById('editor-container'), {
+                value: [
+                    '# Welcome to the Monaco Editor',
+                    'def hello():',
+                    '\tprint("Hello world!")',
+                ].join('\n'),
+                language: 'python',
+                theme: 'vs-dark',
+                automaticLayout: true,
+                minimap: {
+                    enabled: true
+                },
+                fontSize: 14,
+                scrollBeyondLastLine: false
+            });
+
+            window.myEditor = editor;
+        });
+    </script>
+</body>
+
+</html>
