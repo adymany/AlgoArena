@@ -4,6 +4,8 @@ import { useState, useRef, useCallback, useEffect, Suspense } from "react";
 import dynamic from "next/dynamic";
 import { useSearchParams, useRouter } from "next/navigation";
 
+import AISidebarSkeleton from "@/components/AISidebarSkeleton";
+
 const CodeEditor = dynamic(() => import("@/components/CodeEditor"), {
   ssr: false,
   loading: () => (
@@ -23,7 +25,7 @@ const CodeEditor = dynamic(() => import("@/components/CodeEditor"), {
 
 const AISidebar = dynamic(() => import("@/components/AISidebar"), {
   ssr: false,
-  loading: () => <div className="ai-sidebar">Loading AI...</div>,
+  loading: () => <AISidebarSkeleton />,
 });
 
 // Hardcoded defaults no longer used, templates fetched from API
@@ -77,6 +79,7 @@ function HomeContent() {
   const [status, setStatus] = useState("Ready");
   const [isError, setIsError] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Resizable panel state
   const [outputHeight, setOutputHeight] = useState(280);
@@ -170,6 +173,39 @@ function HomeContent() {
       setIsError(true);
     } finally {
       setIsRunning(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!userId || !problem) return;
+    setIsSubmitting(true);
+    setStatus("Submitting...");
+
+    try {
+      const res = await fetch("http://localhost:9000/api/v1/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          problem_id: problem.slug,
+          language,
+          code,
+        }),
+      });
+
+      if (res.ok) {
+        setStatus("✅ Submitted successfully!");
+        setIsError(false);
+      } else {
+        const data = await res.json();
+        setStatus(`❌ ${data.error}`);
+        setIsError(true);
+      }
+    } catch (err) {
+      setStatus("Connection error");
+      setIsError(true);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -275,9 +311,17 @@ function HomeContent() {
               <button
                 className="btn-run primary"
                 onClick={handleRun}
-                disabled={isRunning}
+                disabled={isRunning || isSubmitting}
               >
                 {isRunning ? "⏳ Running..." : "▶ Run"}
+              </button>
+              <button
+                className="btn-run"
+                onClick={handleSubmit}
+                disabled={isRunning || isSubmitting}
+                style={{ background: "#22c55e", marginLeft: "0.5rem" }}
+              >
+                {isSubmitting ? "⏳ Submitting..." : "✓ Submit"}
               </button>
             </div>
           </div>
@@ -354,13 +398,15 @@ function HomeContent() {
         </div>
 
         {/* AI Sidebar */}
-        {userId && problem && (
+        {problem ? (
           <AISidebar
             code={code}
             language={language}
             userId={userId}
             problemId={problem.slug}
           />
+        ) : (
+          <AISidebarSkeleton />
         )}
       </div>
     </>

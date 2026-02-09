@@ -8,8 +8,8 @@
       "args": [],
       "stopAtEntry": false,
       "externalConsole": true,
-      "cwd": "c:/Users/adnan/Desktop/competative coding patform/backend/problems/two_sum",
-      "program": "c:/Users/adnan/Desktop/competative coding patform/backend/problems/two_sum/build/Debug/outDebug",
+      "cwd": ".",
+      "program": "build/Debug/outDebug",
       "MIMode": "gdb",
       "miDebuggerPath": "gdb",
       "setupCommands": [

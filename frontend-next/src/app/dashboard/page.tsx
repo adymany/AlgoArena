@@ -52,6 +52,20 @@ export default function Dashboard() {
             Welcome, {username}
           </span>
           <button
+            onClick={() => router.push("/profile")}
+            style={{
+              background: "transparent",
+              border: "1px solid var(--border-color)",
+              color: "var(--text-secondary)",
+              padding: "0.25rem 0.75rem",
+              borderRadius: "4px",
+              cursor: "pointer",
+              fontSize: "0.8rem",
+            }}
+          >
+            👤 Profile
+          </button>
+          <button
             onClick={handleLogout}
             style={{
               background: "transparent",

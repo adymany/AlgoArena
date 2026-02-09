@@ -12,9 +12,11 @@ interface Message {
 interface AISidebarProps {
   code: string;
   language: string;
-  userId: number;
+  userId: number | null;
   problemId: string;
 }
+
+import AISidebarSkeleton from "./AISidebarSkeleton";
 
 export default function AISidebar({
   code,
@@ -25,14 +27,20 @@ export default function AISidebar({
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [width, setWidth] = useState(320);
   const [isResizing, setIsResizing] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Load chat history
   useEffect(() => {
-    if (!userId || !problemId) return;
+    if (!userId) {
+      setIsHistoryLoading(false);
+      return;
+    }
+    if (!problemId) return;
 
+    setIsHistoryLoading(true);
     fetch(`http://localhost:9000/api/v1/chat/${problemId}?user_id=${userId}`)
       .then((res) => res.json())
       .then((data) => {
@@ -50,7 +58,8 @@ export default function AISidebar({
           ]);
         }
       })
-      .catch((err) => console.error("Failed to load chat", err));
+      .catch((err) => console.error("Failed to load chat", err))
+      .finally(() => setIsHistoryLoading(false));
   }, [userId, problemId]);
 
   const scrollToBottom = () => {
@@ -59,7 +68,7 @@ export default function AISidebar({
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, isHistoryLoading]);
 
   // Save chat to DB
   const saveChatToDB = useCallback(
@@ -222,6 +231,18 @@ Be concise and helpful. Use Markdown for code blocks and formatting.`;
     });
   };
 
+  if (isHistoryLoading) {
+    return (
+      <>
+        <div
+          className={`sidebar-resizer ${isResizing ? "active" : ""}`}
+          onMouseDown={handleMouseDown}
+        />
+        <AISidebarSkeleton width={width} />
+      </>
+    );
+  }
+
   return (
     <>
       <div
@@ -244,50 +265,70 @@ Be concise and helpful. Use Markdown for code blocks and formatting.`;
         </div>
 
         <div className="ai-messages">
-          {messages.map((msg, idx) => (
-            <div key={idx} className={`ai-message ${msg.role}`}>
-              <div className="ai-message-avatar">
-                {msg.role === "assistant" ? "🤖" : "👤"}
-              </div>
-              <div className="ai-message-content">
-                <div className="ai-message-bubble">
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
-                </div>
-                <span className="ai-message-time">
-                  {formatTime(msg.timestamp)}
-                </span>
-              </div>
-            </div>
-          ))}
-          {isLoading && (
+          {!userId ? (
             <div className="ai-message assistant">
               <div className="ai-message-avatar">🤖</div>
               <div className="ai-message-content">
-                <div className="ai-typing">
-                  <span></span>
-                  <span></span>
-                  <span></span>
+                <div className="ai-message-bubble">
+                  Please{" "}
+                  <a
+                    href="/login"
+                    style={{ color: "#a855f7", textDecoration: "underline" }}
+                  >
+                    login
+                  </a>{" "}
+                  to use AlgoBot AI assistance.
                 </div>
               </div>
             </div>
+          ) : (
+            <>
+              {messages.map((msg, idx) => (
+                <div key={idx} className={`ai-message ${msg.role}`}>
+                  <div className="ai-message-avatar">
+                    {msg.role === "assistant" ? "🤖" : "👤"}
+                  </div>
+                  <div className="ai-message-content">
+                    <div className="ai-message-bubble">
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    </div>
+                    <span className="ai-message-time">
+                      {formatTime(msg.timestamp)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+              {isLoading && (
+                <div className="ai-message assistant">
+                  <div className="ai-message-avatar">🤖</div>
+                  <div className="ai-message-content">
+                    <div className="ai-typing">
+                      <span></span>
+                      <span></span>
+                      <span></span>
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </>
           )}
-          <div ref={messagesEndRef} />
         </div>
 
         <div className="ai-input-container">
           <input
             type="text"
             className="ai-input"
-            placeholder="Ask AlgoBot..."
+            placeholder={userId ? "Ask AlgoBot..." : "Login to chat"}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyPress={handleKeyPress}
-            disabled={isLoading}
+            disabled={isLoading || !userId}
           />
           <button
             className="ai-send-btn"
             onClick={sendMessage}
-            disabled={isLoading || !input.trim()}
+            disabled={isLoading || !input.trim() || !userId}
           >
             ➤
           </button>

@@ -8,9 +8,193 @@ import threading
 import psycopg2
 import time
 import json
+import shutil
 from werkzeug.security import generate_password_hash, check_password_hash
 
+# Base directory is where this script lives (backend/)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROBLEMS_DIR = os.path.join(BASE_DIR, "problems")
+
 app = Flask(__name__)
+
+@app.route("/api/v1/problems/<slug>", methods=["GET"])
+def get_problem(slug):
+    print(f"Fetching problem details: {slug}")
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, "SELECT slug, title, description, difficulty, templates FROM problems WHERE slug = %s", (slug,))
+        row = cur.fetchone()
+        if row:
+            # Read driver files from disk
+            problem_dir = os.path.join(PROBLEMS_DIR, slug)
+            driver_python = ""
+            driver_cpp = ""
+            test_data = ""
+            
+            if os.path.exists(os.path.join(problem_dir, "driver.py")):
+                with open(os.path.join(problem_dir, "driver.py"), "r", encoding="utf-8") as f:
+                    driver_python = f.read()
+            
+            if os.path.exists(os.path.join(problem_dir, "driver.cpp")):
+                with open(os.path.join(problem_dir, "driver.cpp"), "r", encoding="utf-8") as f:
+                    driver_cpp = f.read()
+                    
+            if os.path.exists(os.path.join(problem_dir, "test_data.txt")):
+                with open(os.path.join(problem_dir, "test_data.txt"), "r", encoding="utf-8") as f:
+                    test_data = f.read()
+
+            return jsonify({
+                "slug": row[0], 
+                "title": row[1], 
+                "description": row[2], 
+                "difficulty": row[3],
+                "templates": row[4],
+                "driver_python": driver_python,
+                "driver_cpp": driver_cpp,
+                "test_data": test_data
+            })
+        return jsonify({"error": "Problem not found"}), 404
+    finally:
+        conn.close()
+
+# --- Admin Endpoints ---
+@app.route("/api/v1/admin/problems", methods=["POST"])
+def create_problem():
+    data = request.json
+    slug = data.get("slug")
+    title = data.get("title")
+    description = data.get("description", "")
+    difficulty = data.get("difficulty", "Easy")
+    python_template = data.get("python_template", "")
+    cpp_template = data.get("cpp_template", "")
+    driver_python = data.get("driver_python", "")
+    driver_cpp = data.get("driver_cpp", "")
+    test_data = data.get("test_data", "")
+    
+    print(f"Creating new problem: {slug}")
+    
+    if not slug or not title:
+        return jsonify({"error": "slug and title are required"}), 400
+    
+    templates = json.dumps({"python": python_template, "cpp": cpp_template})
+    
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, "SELECT id FROM problems WHERE slug = %s", (slug,))
+        if cur.fetchone():
+            return jsonify({"error": "Problem with this slug already exists"}), 409
+        
+        execute_query(cur, 
+            "INSERT INTO problems (slug, title, description, difficulty, templates) VALUES (%s, %s, %s, %s, %s)",
+            (slug, title, description, difficulty, templates))
+        conn.commit()
+        
+        problem_dir = os.path.join(PROBLEMS_DIR, slug)
+        os.makedirs(problem_dir, exist_ok=True)
+        
+        if driver_python:
+            with open(os.path.join(problem_dir, "driver.py"), "w", encoding="utf-8") as f:
+                f.write(driver_python)
+        
+        if driver_cpp:
+            with open(os.path.join(problem_dir, "driver.cpp"), "w", encoding="utf-8") as f:
+                f.write(driver_cpp)
+        
+        if test_data:
+            with open(os.path.join(problem_dir, "test_data.txt"), "w", encoding="utf-8") as f:
+                f.write(test_data)
+        
+        return jsonify({"message": "Problem created", "slug": slug}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route("/api/v1/admin/problems/<slug>", methods=["PUT"])
+def update_problem(slug):
+    data = request.json
+    title = data.get("title")
+    description = data.get("description", "")
+    difficulty = data.get("difficulty", "Easy")
+    python_template = data.get("python_template", "")
+    cpp_template = data.get("cpp_template", "")
+    driver_python = data.get("driver_python", "")
+    driver_cpp = data.get("driver_cpp", "")
+    test_data = data.get("test_data", "")
+    
+    print(f"Updating problem: {slug}")
+    
+    templates = json.dumps({"python": python_template, "cpp": cpp_template})
+    
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        # Check if problem exists
+        execute_query(cur, "SELECT id FROM problems WHERE slug = %s", (slug,))
+        if not cur.fetchone():
+            return jsonify({"error": "Problem not found"}), 404
+            
+        execute_query(cur, 
+            "UPDATE problems SET title = %s, description = %s, difficulty = %s, templates = %s WHERE slug = %s",
+            (title, description, difficulty, templates, slug))
+        conn.commit()
+        
+        # Update files
+        problem_dir = os.path.join(PROBLEMS_DIR, slug)
+        os.makedirs(problem_dir, exist_ok=True)
+        
+        # Always write (truncate) or create
+        with open(os.path.join(problem_dir, "driver.py"), "w", encoding="utf-8") as f:
+            f.write(driver_python)
+        
+        with open(os.path.join(problem_dir, "driver.cpp"), "w", encoding="utf-8") as f:
+            f.write(driver_cpp)
+        
+        with open(os.path.join(problem_dir, "test_data.txt"), "w", encoding="utf-8") as f:
+            f.write(test_data)
+        
+        return jsonify({"message": "Problem updated"}), 200
+    except Exception as e:
+        print(f"Update error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route("/api/v1/admin/problems/<slug>", methods=["DELETE"])
+def delete_problem(slug):
+    print(f"Deleting problem: {slug}")
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        
+        # 1. Delete associated chat sessions
+        execute_query(cur, "DELETE FROM chat_sessions WHERE problem_id = %s", (slug,))
+        
+        # 2. Delete associated submissions
+        execute_query(cur, "DELETE FROM submissions WHERE problem_id = %s", (slug,))
+
+        # 3. Delete the problem itself
+        execute_query(cur, "DELETE FROM problems WHERE slug = %s RETURNING slug", (slug,))
+        row = cur.fetchone()
+        
+        if not row:
+             return jsonify({"error": "Problem not found"}), 404
+        
+        conn.commit()
+        
+        # Remove files
+        problem_dir = os.path.join(PROBLEMS_DIR, slug)
+        if os.path.exists(problem_dir):
+            shutil.rmtree(problem_dir)
+            
+        return jsonify({"message": "Problem deleted"}), 200
+    except Exception as e:
+        print(f"Delete error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
 CORS(app) 
 
 client = docker.from_env()
@@ -266,23 +450,66 @@ def get_problems():
     finally:
         conn.close()
 
-@app.route("/api/v1/problems/<slug>", methods=["GET"])
-def get_problem(slug):
-    print(f"Fetching problem details: {slug}")
+
+# --- Submissions Endpoints ---
+@app.route("/api/v1/submissions", methods=["GET"])
+def get_submissions():
+    user_id = request.args.get("user_id")
+    print(f"Fetching submissions for user: {user_id}")
+    
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+    
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        execute_query(cur, "SELECT slug, title, description, difficulty, templates FROM problems WHERE slug = %s", (slug,))
-        row = cur.fetchone()
-        if row:
-            return jsonify({
-                "slug": row[0], 
-                "title": row[1], 
-                "description": row[2], 
-                "difficulty": row[3],
-                "templates": row[4]
-            })
-        return jsonify({"error": "Problem not found"}), 404
+        execute_query(cur, """
+            SELECT id, problem_id, language, status, created_at 
+            FROM submissions 
+            WHERE user_id = %s 
+            ORDER BY created_at DESC
+            LIMIT 50
+        """, (user_id,))
+        
+        submissions = [{
+            "id": row[0],
+            "problem_id": row[1],
+            "language": row[2],
+            "status": row[3],
+            "created_at": row[4].isoformat() if row[4] else None
+        } for row in cur.fetchall()]
+        
+        return jsonify(submissions)
+    finally:
+        conn.close()
+
+@app.route("/api/v1/submit", methods=["POST"])
+def submit_code():
+    data = request.json
+    user_id = data.get("user_id")
+    problem_id = data.get("problem_id")
+    language = data.get("language")
+    code = data.get("code")
+    
+    print(f"Submission: User={user_id}, Problem={problem_id}")
+    
+    if not all([user_id, problem_id, language, code]):
+        return jsonify({"error": "Missing required fields"}), 400
+    
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, 
+            "INSERT INTO submissions (user_id, problem_id, language, code, status) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+            (user_id, problem_id, language, code, "Submitted")
+        )
+        sub_id = cur.fetchone()[0]
+        conn.commit()
+        print(f"Submission saved with ID: {sub_id}")
+        return jsonify({"message": "Submitted successfully", "submission_id": sub_id}), 201
+    except Exception as e:
+        print(f"Submit error: {e}")
+        return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
 
@@ -384,28 +611,35 @@ def run_code():
         t.addfile(info, io.BytesIO(b_code))
         
         if pid != "":
-            p_path = os.path.join("backend", "problems", pid)
-            if not os.path.exists(p_path):
-                p_path = os.path.join("problems", pid)
+            p_path = os.path.join(PROBLEMS_DIR, pid)
+            print(f"Loading problem files from: {p_path}")
              
             if lang == "python":
                 d_name = "driver.py"
             else:
                 d_name = "driver.cpp"
                 
-            if os.path.exists(os.path.join(p_path, d_name)):
-                with open(os.path.join(p_path, d_name), "rb") as f:
+            driver_path = os.path.join(p_path, d_name)
+            if os.path.exists(driver_path):
+                print(f"  Found driver: {driver_path}")
+                with open(driver_path, "rb") as f:
                     d_data = f.read()
                     info2 = tarfile.TarInfo(name=d_name)
                     info2.size = len(d_data)
                     t.addfile(info2, io.BytesIO(d_data))
+            else:
+                print(f"  WARNING: Driver not found: {driver_path}")
 
-            if os.path.exists(os.path.join(p_path, "test_data.txt")):
-                 with open(os.path.join(p_path, "test_data.txt"), "rb") as f:
+            test_path = os.path.join(p_path, "test_data.txt")
+            if os.path.exists(test_path):
+                print(f"  Found test data: {test_path}")
+                with open(test_path, "rb") as f:
                     t_data = f.read()
                     info3 = tarfile.TarInfo(name="test_data.txt")
                     info3.size = len(t_data)
                     t.addfile(info3, io.BytesIO(t_data))
+            else:
+                print(f"  WARNING: Test data not found: {test_path}")
         
         t.close()
         stream.seek(0)
@@ -447,7 +681,14 @@ def run_code():
         
         # Save submission
         execution_output = res["msg"].decode('utf-8') if res["msg"] else ""
-        exec_status = "Executed" if res["code"] == 0 else "Error"
+        
+        # Determine Pass/Fail based on test output
+        if res["code"] != 0:
+            exec_status = "Fail"
+        elif "FAIL" in execution_output:
+            exec_status = "Fail"
+        else:
+            exec_status = "Pass"
         
         if user_id: 
             try:

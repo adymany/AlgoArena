@@ -526,6 +526,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  min-width: 0; /* Crucial for text-overflow in flex children */
+  width: 100%;
 }
 
 .ai-message.user .ai-message-content {
@@ -539,6 +541,8 @@ body {
   line-height: 1.5;
   white-space: pre-wrap;
   word-wrap: break-word;
+  overflow-wrap: break-word; /* Modern standard */
+  max-width: 100%;
 }
 
 .ai-message-bubble p {
@@ -561,6 +565,7 @@ body {
   border-radius: 3px;
   font-family: "Fira Code", monospace;
   font-size: 0.85em;
+  word-break: break-all; /* Ensure inline code wraps */
 }
 
 .ai-message-bubble pre {
@@ -569,12 +574,15 @@ body {
   border-radius: 6px;
   overflow-x: auto;
   margin: 0.5rem 0;
+  max-width: 100%; /* Force scrollbar instead of expansion */
 }
 
 .ai-message-bubble pre code {
   background: transparent;
   padding: 0;
   color: #e2e8f0;
+  white-space: pre; /* Maintain code formatting in blocks */
+  word-break: normal; /* Don't break words in code blocks */
 }
 
 .ai-message.assistant .ai-message-bubble {
