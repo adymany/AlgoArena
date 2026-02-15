@@ -47,22 +47,42 @@ export default function AdminPage() {
       if (!apiKey) throw new Error("API Key not found");
 
       const prompt = `
-You are a coding problem generator. Generate a competitive programming problem.
+You are an expert competitive programming problem generator.
+Your task is to generate a complete problem in JSON format, including robust driver code for testing.
 
 Title: "${formData.title}"
 Difficulty: "${formData.difficulty}"
 
-=== MANDATORY FORMAT ===
+=== GOAL ===
+Generate a valid JSON object containing:
+1. slug (kebab-case)
+2. description (HTML format)
+3. python_template (Solution class scaffold)
+4. cpp_template (Solution class scaffold)
+5. driver_python (Complete runnable test script)
+6. driver_cpp (Complete runnable test script)
+7. test_data (One JSON object per line)
 
-Each test case in test_data MUST be a single-line JSON object:
-{"input": {...}, "expected": ...}
+=== CRITICAL REQUIREMENTS ===
+1. **Driver Code**: MUST read 'test_data.txt' line by line.
+2. **Test Data**: Each line is a JSON object: {"input": {...}, "expected": ...}
+3. **Execution**: Driver must parse input, call the Solution method, and print results.
+4. **Validation**: Compare result with expected. Print "CASE|{id}|PASS|..." or "CASE|{id}|FAIL|...".
+5. **C++ Parsing**: Use std::regex to parse the JSON input manually (since no external JSON lib is available).
+6. **Quantity**: Generate exactly 3-4 diverse test cases.
 
-The driver MUST parse this JSON format. Here's the EXACT pattern to follow:
+=== ONE-SHOT EXAMPLE (follow this structure EXACTLY) ===
 
-=== COMPLETE PYTHON DRIVER TEMPLATE ===
+If the problem is "Two Sum" (find two indices adding to target):
+
+python_template:
+class Solution:
+    def twoSum(self, nums: List[int], target: int) -> List[int]:
+        return []
+
+driver_python:
 import sys
 import json
-sys.path.insert(0, '/app')
 from solution import Solution
 
 sol = Solution()
@@ -71,69 +91,86 @@ case_id = 0
 with open('test_data.txt', 'r') as f:
     for line in f:
         line = line.strip()
-        if not line:
-            continue
+        if not line: continue
         case_id += 1
         try:
             data = json.loads(line)
-            # Extract input args and expected result
-            inp = data["input"]
-            expected = data["expected"]
+            inputs = data['input']
+            expected = data['expected']
             
-            # Call solution - ADAPT THIS LINE to match your function signature
-            result = sol.solve(inp["arg1"], inp["arg2"])  # Example: adjust argument names
+            # ADAPT: Unpack arguments based on problem
+            result = sol.twoSum(inputs['nums'], inputs['target'])
             
             status = "PASS" if result == expected else "FAIL"
-            print(f"CASE|{case_id}|{status}|{inp}|{result}|{expected}")
+            print(f"CASE|{case_id}|{status}|{inputs}|{result}|{expected}")
         except Exception as e:
-            print(f"CASE|{case_id}|FAIL|error|{str(e)}|N/A")
+            print(f"CASE|{case_id}|FAIL|ERROR|{e}|N/A")
 
-=== COMPLETE C++ DRIVER TEMPLATE ===
+driver_cpp:
 #include <iostream>
 #include <fstream>
-#include <sstream>
+#include <vector>
 #include <string>
+#include <regex>
 #include "solution.cpp"
-// Include any needed headers like <vector>, <algorithm>
+
+// Simple helper to parse list of ints from string "[1,2,3]"
+std::vector<int> parseIntArray(std::string s) {
+    std::vector<int> res;
+    std::regex r("-?\\\\d+");
+    auto words_begin = std::sregex_iterator(s.begin(), s.end(), r);
+    auto words_end = std::sregex_iterator();
+    for (std::sregex_iterator i = words_begin; i != words_end; ++i)
+        res.push_back(std::stoi(i->str()));
+    return res;
+}
 
 int main() {
     Solution sol;
     std::ifstream file("test_data.txt");
     std::string line;
     int case_id = 0;
-    
+
+
+    // ADAPT: Regex to extract inputs. Example for {"input": {"nums": [...], "target": 9}, "expected": [...]}
+    // You MUST write a specific regex for the generated test_data format.
+    // Use R"(...)" for raw strings to avoid escape hell.
+    // Use \\s* to be flexible with whitespace.
+    // Example Pattern: R"(\"nums\":\s*(\[.*?\]),\s*\"target\":\s*(-?\d+).*\"expected\":\s*(-?\d+))"
+    std::regex pattern(R"(\"nums\":\s*(\[.*?\]),\s*\"target\":\s*(-?\d+).*\"expected\":\s*(-?\d+))");
+
     while (std::getline(file, line)) {
         if (line.empty()) continue;
         case_id++;
-        // Parse JSON manually or use simple format
-        // Call sol.methodName(...) 
-        // Compare and print CASE|id|PASS/FAIL|input|output|expected
+        std::smatch matches;
+        if (std::regex_search(line, matches, pattern)) {
+            // Parse extracted strings
+            std::vector<int> nums = parseIntArray(matches[1].str());
+            int target = std::stoi(matches[2].str());
+            std::vector<int> expected = parseIntArray(matches[3].str());
+
+            // ADAPT: Call solution
+            std::vector<int> result = sol.twoSum(nums, target);
+
+            bool pass = (result == expected);
+            std::cout << "CASE|" << case_id << "|" << (pass ? "PASS" : "FAIL") 
+                      << "|" << line << "|" << (pass ? "OK" : "BAD") << "|" << "N/A" << std::endl;
+        } else {
+             std::cout << "CASE|" << case_id << "|FAIL|Parse Error|N/A|N/A" << std::endl;
+        }
     }
     return 0;
 }
 
-=== TEST DATA FORMAT (one JSON per line) ===
-{"input": {"nums": [1,2,3], "target": 2}, "expected": 1}
-{"input": {"nums": [4,5,6], "target": 7}, "expected": -1}
+test_data:
+{"input": {"nums": [2,7,11,15], "target": 9}, "expected": [0,1]}
+{"input": {"nums": [3,2,4], "target": 6}, "expected": [1,2]}
 
-=== OUTPUT JSON (return ONLY this, no markdown) ===
-{
-  "slug": "problem-slug-here",
-  "description": "<h3>Problem Statement</h3><p>Clear description with examples...</p>",
-  "python_template": "class Solution:\\n    def methodName(self, arg1, arg2):\\n        # Write your solution here\\n        pass",
-  "cpp_template": "class Solution {\\npublic:\\n    int methodName(vector<int>& arg1, int arg2) {\\n        // Write your solution here\\n        return 0;\\n    }\\n};",
-  "driver_python": "PASTE THE COMPLETE PYTHON DRIVER CODE HERE - adapted for this problem's function signature",
-  "driver_cpp": "PASTE THE COMPLETE C++ DRIVER CODE HERE - adapted for this problem",
-  "test_data": "One JSON object per line as shown above. Include 10-20 test cases covering edge cases."
-}
+=== END ONE-SHOT ===
 
-CRITICAL:
-1. driver_python MUST use json.loads() to parse each line
-2. driver_python MUST call the EXACT method name from python_template
-3. test_data MUST have input field names matching what driver expects
-4. Solution template must have EMPTY body (pass/return 0) - NO SOLUTION CODE
-5. Driver must NEVER contain solution logic - only call user's Solution class
-      `;
+Now generate the JSON for the new problem: "${formData.title}".
+Ensure driver_cpp uses distinct regex for the specific input format of this new problem.
+`;
 
       const response = await fetch(
         `https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`,
@@ -147,7 +184,12 @@ CRITICAL:
         },
       );
 
-      if (!response.ok) throw new Error("AI Request Failed");
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `API Error: ${response.status} ${response.statusText} - ${errorText}`,
+        );
+      }
 
       const data = await response.json();
       const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -155,6 +197,13 @@ CRITICAL:
       if (!rawText) throw new Error("No data received from AI");
 
       const generated = JSON.parse(rawText);
+
+      let testDataStr = generated.test_data;
+      if (Array.isArray(generated.test_data)) {
+        testDataStr = generated.test_data
+          .map((item: any) => JSON.stringify(item))
+          .join("\n");
+      }
 
       setFormData((prev) => ({
         ...prev,
@@ -164,7 +213,7 @@ CRITICAL:
         cpp_template: generated.cpp_template || prev.cpp_template,
         driver_python: generated.driver_python || prev.driver_python,
         driver_cpp: generated.driver_cpp || prev.driver_cpp,
-        test_data: generated.test_data || prev.test_data,
+        test_data: testDataStr || prev.test_data,
       }));
 
       setMessage("✨ Content generated successfully!");

@@ -649,8 +649,9 @@ def run_code():
         
         def run_thread():
             try:
+                escaped_cmd = cmd.replace("'", "'\\''")
                 c, out = con.exec_run(
-                    cmd=f"/bin/bash -c '{cmd.replace('\'', '\'\\\'')}'",
+                    cmd=f"/bin/bash -c '{escaped_cmd}'",
                     workdir="/home/sandbox"
                 )
                 res["code"] = c
