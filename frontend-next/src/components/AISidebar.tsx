@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
+import { getApiBase } from "@/lib/api";
 
 interface Message {
   role: "user" | "assistant";
@@ -41,7 +42,7 @@ export default function AISidebar({
     if (!problemId) return;
 
     setIsHistoryLoading(true);
-    fetch(`http://localhost:9000/api/v1/chat/${problemId}?user_id=${userId}`)
+    fetch(`${getApiBase()}/api/v1/chat/${problemId}?user_id=${userId}`)
       .then((res) => res.json())
       .then((data) => {
         if (Array.isArray(data) && data.length > 0) {
@@ -73,7 +74,7 @@ export default function AISidebar({
   // Save chat to DB
   const saveChatToDB = useCallback(
     (newHistory: Message[]) => {
-      fetch("http://localhost:9000/api/v1/chat/save", {
+      fetch(`${getApiBase()}/api/v1/chat/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -252,7 +253,7 @@ Be concise and helpful. Use Markdown for code blocks and formatting.`;
       <div className="ai-sidebar" style={{ width: width }}>
         <div className="ai-header">
           <div className="ai-header-left">
-            <div className="ai-avatar">🤖</div>
+            <div className="ai-avatar-icon">AI</div>
             <div className="ai-header-text">
               <h2 className="ai-title">AlgoBot</h2>
               <span className="ai-subtitle">AI Assistant</span>
@@ -267,7 +268,9 @@ Be concise and helpful. Use Markdown for code blocks and formatting.`;
         <div className="ai-messages">
           {!userId ? (
             <div className="ai-message assistant">
-              <div className="ai-message-avatar">🤖</div>
+              <div className="ai-message-avatar">
+                <span style={{ fontSize: "0.65rem", fontWeight: 700 }}>AI</span>
+              </div>
               <div className="ai-message-content">
                 <div className="ai-message-bubble">
                   Please{" "}
@@ -286,7 +289,7 @@ Be concise and helpful. Use Markdown for code blocks and formatting.`;
               {messages.map((msg, idx) => (
                 <div key={idx} className={`ai-message ${msg.role}`}>
                   <div className="ai-message-avatar">
-                    {msg.role === "assistant" ? "🤖" : "👤"}
+                    {msg.role === "assistant" ? "AI" : "U"}
                   </div>
                   <div className="ai-message-content">
                     <div className="ai-message-bubble">
@@ -300,7 +303,11 @@ Be concise and helpful. Use Markdown for code blocks and formatting.`;
               ))}
               {isLoading && (
                 <div className="ai-message assistant">
-                  <div className="ai-message-avatar">🤖</div>
+                  <div className="ai-message-avatar">
+                    <span style={{ fontSize: "0.65rem", fontWeight: 700 }}>
+                      AI
+                    </span>
+                  </div>
                   <div className="ai-message-content">
                     <div className="ai-typing">
                       <span></span>
@@ -330,7 +337,10 @@ Be concise and helpful. Use Markdown for code blocks and formatting.`;
             onClick={sendMessage}
             disabled={isLoading || !input.trim() || !userId}
           >
-            ➤
+            <svg className="ai-send-icon" viewBox="0 0 24 24">
+              <path d="M22 2L11 13" />
+              <path d="M22 2L15 22L11 13L2 9L22 2Z" />
+            </svg>
           </button>
         </div>
       </div>

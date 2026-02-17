@@ -2,3 +2,4 @@ Flask
 flask-cors
 docker
 psycopg2-binary
+python-dotenv

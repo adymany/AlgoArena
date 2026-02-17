@@ -10,6 +10,10 @@ import time
 import json
 import shutil
 from werkzeug.security import generate_password_hash, check_password_hash
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Base directory is where this script lives (backend/)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -59,6 +63,126 @@ def get_problem(slug):
         conn.close()
 
 # --- Admin Endpoints ---
+
+@app.route("/api/v1/admin/stats", methods=["GET"])
+def admin_stats():
+    from datetime import datetime, timedelta
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+
+        # --- Users ---
+        execute_query(cur, "SELECT COUNT(*) FROM users")
+        total_users = cur.fetchone()[0]
+
+        execute_query(cur, "SELECT COUNT(*) FROM users WHERE created_at >= CURRENT_DATE")
+        new_today = cur.fetchone()[0]
+
+        # Active today = users who submitted today
+        execute_query(cur, """
+            SELECT COUNT(DISTINCT user_id) FROM submissions
+            WHERE created_at >= CURRENT_DATE
+        """)
+        active_today = cur.fetchone()[0]
+
+        # --- Submissions ---
+        execute_query(cur, "SELECT COUNT(*) FROM submissions")
+        total_submissions = cur.fetchone()[0]
+
+        execute_query(cur, "SELECT COUNT(*) FROM submissions WHERE created_at >= CURRENT_DATE")
+        submissions_today = cur.fetchone()[0]
+
+        execute_query(cur, "SELECT COUNT(*) FROM submissions WHERE status = 'Pass'")
+        pass_count = cur.fetchone()[0]
+
+        fail_count = total_submissions - pass_count
+        acceptance_rate = round((pass_count / max(total_submissions, 1)) * 100, 1)
+
+        # --- Problems ---
+        execute_query(cur, "SELECT COUNT(*) FROM problems")
+        total_problems = cur.fetchone()[0]
+
+        execute_query(cur, "SELECT difficulty, COUNT(*) FROM problems GROUP BY difficulty")
+        by_difficulty = {row[0]: row[1] for row in cur.fetchall()}
+
+        # --- Hourly Activity (today, 24h) ---
+        execute_query(cur, """
+            SELECT EXTRACT(HOUR FROM created_at)::int AS hr, COUNT(*)
+            FROM submissions
+            WHERE created_at >= CURRENT_DATE
+            GROUP BY hr ORDER BY hr
+        """)
+        hourly_map = {row[0]: row[1] for row in cur.fetchall()}
+        hourly_activity = []
+        for h in range(24):
+            hourly_activity.append({
+                "hour": f"{h:02d}:00",
+                "count": hourly_map.get(h, 0)
+            })
+
+        # --- Language Distribution ---
+        execute_query(cur, """
+            SELECT language, COUNT(*) FROM submissions GROUP BY language ORDER BY COUNT(*) DESC
+        """)
+        language_distribution = {row[0]: row[1] for row in cur.fetchall()}
+
+        # --- Top Problems (by submission count) ---
+        execute_query(cur, """
+            SELECT s.problem_id, p.title, 
+                   COUNT(*) AS total,
+                   SUM(CASE WHEN s.status = 'Pass' THEN 1 ELSE 0 END) AS passes
+            FROM submissions s
+            LEFT JOIN problems p ON s.problem_id = p.slug
+            GROUP BY s.problem_id, p.title
+            ORDER BY total DESC
+            LIMIT 8
+        """)
+        top_problems = []
+        for row in cur.fetchall():
+            t = row[2]
+            p = row[3]
+            top_problems.append({
+                "slug": row[0],
+                "title": row[1] or row[0],
+                "submissions": t,
+                "acceptance": round((p / max(t, 1)) * 100, 1)
+            })
+
+        # --- Recent Users with stats ---
+        execute_query(cur, """
+            SELECT u.id, u.username, u.created_at,
+                   COUNT(s.id) AS sub_count,
+                   COUNT(DISTINCT CASE WHEN s.status = 'Pass' THEN s.problem_id END) AS solved,
+                   MAX(s.created_at) AS last_active
+            FROM users u
+            LEFT JOIN submissions s ON u.id = s.user_id
+            GROUP BY u.id, u.username, u.created_at
+            ORDER BY sub_count DESC
+        """)
+        recent_users = []
+        for row in cur.fetchall():
+            recent_users.append({
+                "id": row[0],
+                "username": row[1],
+                "joined": row[2].isoformat() if row[2] else None,
+                "submissions": row[3],
+                "solved": row[4],
+                "last_active": row[5].isoformat() if row[5] else None
+            })
+
+        return jsonify({
+            "users": {"total": total_users, "new_today": new_today, "active_today": active_today},
+            "submissions": {"total": total_submissions, "today": submissions_today, "pass_count": pass_count, "fail_count": fail_count},
+            "acceptance_rate": acceptance_rate,
+            "problems": {"total": total_problems, "by_difficulty": by_difficulty},
+            "hourly_activity": hourly_activity,
+            "language_distribution": language_distribution,
+            "top_problems": top_problems,
+            "recent_users": recent_users
+        })
+    finally:
+        conn.close()
+
 @app.route("/api/v1/admin/problems", methods=["POST"])
 def create_problem():
     data = request.json
@@ -203,11 +327,11 @@ client = docker.from_env()
 def get_db_connection():
     try:
         conn = psycopg2.connect(
-            host="localhost",
-            database="contest_db",
-            user="user",
-            password="password",
-            port="5432"
+            host=os.getenv("DB_HOST", "localhost"),
+            database=os.getenv("DB_NAME", "contest_db"),
+            user=os.getenv("DB_USER", "user"),
+            password=os.getenv("DB_PASSWORD", "password"),
+            port=os.getenv("DB_PORT", "5433")
         )
         return conn
     except Exception as e:
@@ -293,6 +417,14 @@ def init_db():
                 
                 # Seed Problems
                 seed_problems(cur)
+                conn.commit()
+
+                # Seed default user (so user_id=1 always exists)
+                execute_query(cur, "SELECT id FROM users WHERE username = %s", ("admin",))
+                if not cur.fetchone():
+                    hashed = generate_password_hash("admin123")
+                    execute_query(cur, "INSERT INTO users (username, password_hash) VALUES (%s, %s)", ("admin", hashed))
+                    print("Default user 'admin' created (password: admin123)")
                 conn.commit()
                 
                 cur.close()
@@ -451,6 +583,93 @@ def get_problems():
         conn.close()
 
 
+# --- Stats Endpoint ---
+@app.route("/api/v1/stats", methods=["GET"])
+def get_stats():
+    user_id = request.args.get("user_id")
+    if not user_id:
+        return jsonify({"error": "user_id required"}), 400
+
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+
+        # Total problems
+        execute_query(cur, "SELECT COUNT(*) FROM problems")
+        total_problems = cur.fetchone()[0]
+
+        # Problems by difficulty
+        execute_query(cur, "SELECT difficulty, COUNT(*) FROM problems GROUP BY difficulty")
+        diff_totals = {row[0]: row[1] for row in cur.fetchall()}
+
+        # User's solved problems (distinct problem_ids with 'Pass' status)
+        execute_query(cur, """
+            SELECT DISTINCT problem_id FROM submissions 
+            WHERE user_id = %s AND status = 'Pass'
+        """, (user_id,))
+        solved_slugs = [row[0] for row in cur.fetchall()]
+        solved_count = len(solved_slugs)
+
+        # User's attempted problems (distinct problem_ids)
+        execute_query(cur, """
+            SELECT DISTINCT problem_id FROM submissions WHERE user_id = %s
+        """, (user_id,))
+        attempted_count = len(cur.fetchall())
+
+        # Total submissions
+        execute_query(cur, "SELECT COUNT(*) FROM submissions WHERE user_id = %s", (user_id,))
+        total_submissions = cur.fetchone()[0]
+
+        # Pass rate
+        if total_submissions > 0:
+            execute_query(cur, """
+                SELECT COUNT(*) FROM submissions 
+                WHERE user_id = %s AND status = 'Pass'
+            """, (user_id,))
+            pass_count = cur.fetchone()[0]
+            pass_rate = round((pass_count / total_submissions) * 100, 1)
+        else:
+            pass_rate = 0
+
+        # Solved by difficulty
+        by_difficulty = {}
+        for diff, total in diff_totals.items():
+            execute_query(cur, """
+                SELECT COUNT(DISTINCT s.problem_id) FROM submissions s
+                JOIN problems p ON s.problem_id = p.slug
+                WHERE s.user_id = %s AND s.status = 'Pass' AND p.difficulty = %s
+            """, (user_id, diff))
+            solved_in_diff = cur.fetchone()[0]
+            by_difficulty[diff] = {"total": total, "solved": solved_in_diff}
+
+        # Recent activity - last 7 days
+        execute_query(cur, """
+            SELECT DATE(created_at) as day, COUNT(*) 
+            FROM submissions 
+            WHERE user_id = %s AND created_at >= CURRENT_DATE - INTERVAL '6 days'
+            GROUP BY DATE(created_at) 
+            ORDER BY day ASC
+        """, (user_id,))
+        activity_map = {str(row[0]): row[1] for row in cur.fetchall()}
+        
+        from datetime import datetime, timedelta
+        recent_activity = []
+        for i in range(6, -1, -1):
+            day = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
+            recent_activity.append({"date": day, "count": activity_map.get(day, 0)})
+
+        return jsonify({
+            "total_problems": total_problems,
+            "solved": solved_count,
+            "attempted": attempted_count,
+            "pass_rate": pass_rate,
+            "total_submissions": total_submissions,
+            "by_difficulty": by_difficulty,
+            "recent_activity": recent_activity
+        })
+    finally:
+        conn.close()
+
 # --- Submissions Endpoints ---
 @app.route("/api/v1/submissions", methods=["GET"])
 def get_submissions():
@@ -569,21 +788,25 @@ def run_code():
     pid = data.get("problem_id", "")
     user_id = data.get("user_id")
     
-    print(f"Execution request: Lang={lang}, Problem={pid}, User={user_id}")
+    # Optional ad-hoc driver/test data (for admin testing before saving)
+    adhoc_driver = data.get("driver_code")
+    adhoc_test_data = data.get("test_data")
+    
+    print(f"Execution request: Lang={lang}, Problem={pid}, User={user_id}, AdHoc={'yes' if adhoc_driver else 'no'}")
     
     fname = "solution.py"
     cmd = ""
 
     if lang == "python":
         fname = "solution.py"
-        if pid != "":
+        if pid != "" or adhoc_driver:
             cmd = "python3 -u driver.py < test_data.txt"
         else:
             cmd = "python3 solution.py"
             
     elif lang == "cpp":
         fname = "solution.cpp"
-        if pid != "":
+        if pid != "" or adhoc_driver:
             cmd = "g++ -o solution driver.cpp -I/home/sandbox && ./solution < test_data.txt"
         else:
             cmd = "g++ -o solution solution.cpp && ./solution"
@@ -610,7 +833,20 @@ def run_code():
         info.size = len(b_code)
         t.addfile(info, io.BytesIO(b_code))
         
-        if pid != "":
+        # Use ad-hoc driver/test data if provided, otherwise load from disk
+        if adhoc_driver and adhoc_test_data:
+            print("  Using ad-hoc driver and test data from request body")
+            d_name = "driver.py" if lang == "python" else "driver.cpp"
+            d_data = adhoc_driver.encode('utf-8')
+            info2 = tarfile.TarInfo(name=d_name)
+            info2.size = len(d_data)
+            t.addfile(info2, io.BytesIO(d_data))
+            
+            t_data = adhoc_test_data.encode('utf-8')
+            info3 = tarfile.TarInfo(name="test_data.txt")
+            info3.size = len(t_data)
+            t.addfile(info3, io.BytesIO(t_data))
+        elif pid != "":
             p_path = os.path.join(PROBLEMS_DIR, pid)
             print(f"Loading problem files from: {p_path}")
              

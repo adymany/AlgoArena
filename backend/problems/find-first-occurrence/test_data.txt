@@ -1,0 +1,7 @@
+{"input":{"nums":[1,5,3,5,2],"target":5},"expected":1}
+{"input":{"nums":[10,20,30,40],"target":25},"expected":-1}
+{"input":{"nums":[7,7,7,7],"target":7},"expected":0}
+{"input":{"nums":[1,2,3,4,5],"target":1},"expected":0}
+{"input":{"nums":[1,2,3,4,5],"target":5},"expected":4}
+{"input":{"nums":[99],"target":99},"expected":0}
+{"input":{"nums":[99],"target":100},"expected":-1}

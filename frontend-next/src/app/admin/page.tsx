@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { getApiBase } from "@/lib/api";
 
 export default function AdminPage() {
   const router = useRouter();
@@ -10,6 +11,9 @@ export default function AdminPage() {
   const [isError, setIsError] = useState(false);
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testOutput, setTestOutput] = useState("");
+  const [aiPrompt, setAiPrompt] = useState("");
 
   const [formData, setFormData] = useState({
     slug: "",
@@ -33,8 +37,8 @@ export default function AdminPage() {
   };
 
   const generateWithAI = async () => {
-    if (!formData.title) {
-      setMessage("❌ Please enter a title first");
+    if (!aiPrompt.trim() && !formData.title) {
+      setMessage("Please enter a prompt or a title first");
       setIsError(true);
       return;
     }
@@ -46,131 +50,72 @@ export default function AdminPage() {
       const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
       if (!apiKey) throw new Error("API Key not found");
 
-      const prompt = `
-You are an expert competitive programming problem generator.
-Your task is to generate a complete problem in JSON format, including robust driver code for testing.
+      const prompt = `You are an expert competitive programming problem generator for the AlgoArena platform.
 
-Title: "${formData.title}"
+${formData.title ? `Title: "${formData.title}"` : ""}
 Difficulty: "${formData.difficulty}"
 
-=== GOAL ===
-Generate a valid JSON object containing:
-1. slug (kebab-case)
-2. description (HTML format)
-3. python_template (Solution class scaffold)
-4. cpp_template (Solution class scaffold)
-5. driver_python (Complete runnable test script)
-6. driver_cpp (Complete runnable test script)
-7. test_data (One JSON object per line)
+${aiPrompt.trim() ? `=== ADMIN INSTRUCTIONS ===\n${aiPrompt.trim()}\n=== END ADMIN INSTRUCTIONS ===` : ""}
 
-=== CRITICAL REQUIREMENTS ===
-1. **Driver Code**: MUST read 'test_data.txt' line by line.
-2. **Test Data**: Each line is a JSON object: {"input": {...}, "expected": ...}
-3. **Execution**: Driver must parse input, call the Solution method, and print results.
-4. **Validation**: Compare result with expected. Print "CASE|{id}|PASS|..." or "CASE|{id}|FAIL|...".
-5. **C++ Parsing**: Use std::regex to parse the JSON input manually (since no external JSON lib is available).
-6. **Quantity**: Generate exactly 3-4 diverse test cases.
+Generate a JSON object with these EXACT keys:
 
-=== ONE-SHOT EXAMPLE (follow this structure EXACTLY) ===
+1. "slug": kebab-case URL identifier (e.g. "two-sum")
+2. "title": Human readable title (e.g. "Two Sum")
+3. "description": HTML problem statement. MUST include:
+   - Problem explanation in <p> tags
+   - Input/Output format in <p> or <pre> tags
+   - At least 2 examples with <strong>Example 1:</strong> format
+   - Constraints section
+4. "python_template": A Python class stub. Format:
+   class Solution:
+       def methodName(self, param1: type, ...) -> returnType:
+           pass
+5. "cpp_template": A C++ class stub. Format:
+   class Solution {
+   public:
+       returnType methodName(paramType param1, ...) {
+           
+       }
+   };
+6. "driver_python": Python test driver that reads stdin line by line. CRITICAL FORMAT:
+   - Each line from stdin is a JSON object: {"input": {...}, "expected": ...}
+   - Must print EXACTLY this pipe-delimited format for EACH test case:
+     CASE|<number>|PASS|<input_summary>|<actual_output>|<expected_output>
+     CASE|<number>|FAIL|<input_summary>|<actual_output>|<expected_output>
+   - There must be exactly 6 pipe-separated fields, no spaces around pipes
+   - Must import: from solution import Solution
+   - Must read from stdin (NOT from a file)
+7. "driver_cpp": C++ test driver. Same output format as Python driver. Must #include "solution.cpp". Read from stdin.
+8. "test_data": Array of objects, each with "input" and "expected" keys. 3-5 diverse test cases.
 
-If the problem is "Two Sum" (find two indices adding to target):
-
-python_template:
-class Solution:
-    def twoSum(self, nums: List[int], target: int) -> List[int]:
-        return []
-
-driver_python:
+=== EXAMPLE driver_python (follow this EXACT pattern) ===
 import sys
 import json
+sys.path.append("/home/sandbox")
 from solution import Solution
 
 sol = Solution()
 case_id = 0
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    case_id += 1
+    try:
+        data = json.loads(line)
+        inp = data["input"]
+        expected = data["expected"]
+        result = sol.twoSum(inp["nums"], inp["target"])
+        status = "PASS" if result == expected else "FAIL"
+        print(f"CASE|{case_id}|{status}|{inp}|{result}|{expected}")
+    except Exception as e:
+        print(f"CASE|{case_id}|FAIL|ERROR|{e}|N/A")
+=== END EXAMPLE ===
 
-with open('test_data.txt', 'r') as f:
-    for line in f:
-        line = line.strip()
-        if not line: continue
-        case_id += 1
-        try:
-            data = json.loads(line)
-            inputs = data['input']
-            expected = data['expected']
-            
-            # ADAPT: Unpack arguments based on problem
-            result = sol.twoSum(inputs['nums'], inputs['target'])
-            
-            status = "PASS" if result == expected else "FAIL"
-            print(f"CASE|{case_id}|{status}|{inputs}|{result}|{expected}")
-        except Exception as e:
-            print(f"CASE|{case_id}|FAIL|ERROR|{e}|N/A")
-
-driver_cpp:
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <string>
-#include <regex>
-#include "solution.cpp"
-
-// Simple helper to parse list of ints from string "[1,2,3]"
-std::vector<int> parseIntArray(std::string s) {
-    std::vector<int> res;
-    std::regex r("-?\\\\d+");
-    auto words_begin = std::sregex_iterator(s.begin(), s.end(), r);
-    auto words_end = std::sregex_iterator();
-    for (std::sregex_iterator i = words_begin; i != words_end; ++i)
-        res.push_back(std::stoi(i->str()));
-    return res;
-}
-
-int main() {
-    Solution sol;
-    std::ifstream file("test_data.txt");
-    std::string line;
-    int case_id = 0;
-
-
-    // ADAPT: Regex to extract inputs. Example for {"input": {"nums": [...], "target": 9}, "expected": [...]}
-    // You MUST write a specific regex for the generated test_data format.
-    // Use R"(...)" for raw strings to avoid escape hell.
-    // Use \\s* to be flexible with whitespace.
-    // Example Pattern: R"(\"nums\":\s*(\[.*?\]),\s*\"target\":\s*(-?\d+).*\"expected\":\s*(-?\d+))"
-    std::regex pattern(R"(\"nums\":\s*(\[.*?\]),\s*\"target\":\s*(-?\d+).*\"expected\":\s*(-?\d+))");
-
-    while (std::getline(file, line)) {
-        if (line.empty()) continue;
-        case_id++;
-        std::smatch matches;
-        if (std::regex_search(line, matches, pattern)) {
-            // Parse extracted strings
-            std::vector<int> nums = parseIntArray(matches[1].str());
-            int target = std::stoi(matches[2].str());
-            std::vector<int> expected = parseIntArray(matches[3].str());
-
-            // ADAPT: Call solution
-            std::vector<int> result = sol.twoSum(nums, target);
-
-            bool pass = (result == expected);
-            std::cout << "CASE|" << case_id << "|" << (pass ? "PASS" : "FAIL") 
-                      << "|" << line << "|" << (pass ? "OK" : "BAD") << "|" << "N/A" << std::endl;
-        } else {
-             std::cout << "CASE|" << case_id << "|FAIL|Parse Error|N/A|N/A" << std::endl;
-        }
-    }
-    return 0;
-}
-
-test_data:
-{"input": {"nums": [2,7,11,15], "target": 9}, "expected": [0,1]}
-{"input": {"nums": [3,2,4], "target": 6}, "expected": [1,2]}
-
-=== END ONE-SHOT ===
-
-Now generate the JSON for the new problem: "${formData.title}".
-Ensure driver_cpp uses distinct regex for the specific input format of this new problem.
-`;
+CRITICAL RULES:
+- Output format MUST be: CASE|number|PASS or FAIL|input|actual|expected (6 fields, pipe-separated)
+- Driver reads JSON from STDIN, one test case per line
+- Use \\n for newlines inside JSON string values, never literal newlines
+- description MUST be properly formatted HTML, not plain text`;
 
       const response = await fetch(
         `https://aiplatform.googleapis.com/v1/publishers/google/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`,
@@ -196,7 +141,29 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
 
       if (!rawText) throw new Error("No data received from AI");
 
-      const generated = JSON.parse(rawText);
+      // Strip markdown code fences if present (```json ... ```)
+      let jsonStr = rawText.trim();
+      if (jsonStr.startsWith("```")) {
+        jsonStr = jsonStr
+          .replace(/^```(?:json)?\s*/, "")
+          .replace(/\s*```$/, "");
+      }
+
+      console.log("Raw AI text (first 500 chars):", jsonStr.substring(0, 500));
+
+      let generated;
+      try {
+        generated = JSON.parse(jsonStr);
+      } catch {
+        // Fix literal control chars that break JSON
+        const fixed = jsonStr.replace(/[\x00-\x1f]/g, (ch: string) => {
+          if (ch === "\n") return "\\n";
+          if (ch === "\r") return "\\r";
+          if (ch === "\t") return "\\t";
+          return "";
+        });
+        generated = JSON.parse(fixed);
+      }
 
       let testDataStr = generated.test_data;
       if (Array.isArray(generated.test_data)) {
@@ -205,25 +172,105 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
           .join("\n");
       }
 
+      console.log("AI generated keys:", Object.keys(generated));
+      console.log("AI generated data:", generated);
+
       setFormData((prev) => ({
         ...prev,
         slug: generated.slug || prev.slug,
+        title: generated.title || prev.title,
         description: generated.description || prev.description,
-        python_template: generated.python_template || prev.python_template,
-        cpp_template: generated.cpp_template || prev.cpp_template,
-        driver_python: generated.driver_python || prev.driver_python,
-        driver_cpp: generated.driver_cpp || prev.driver_cpp,
+        python_template:
+          generated.python_template ||
+          generated.pythonTemplate ||
+          generated.python_starter ||
+          prev.python_template,
+        cpp_template:
+          generated.cpp_template ||
+          generated.cppTemplate ||
+          generated.cpp_starter ||
+          prev.cpp_template,
+        driver_python:
+          generated.driver_python ||
+          generated.driverPython ||
+          generated.python_driver ||
+          prev.driver_python,
+        driver_cpp:
+          generated.driver_cpp ||
+          generated.driverCpp ||
+          generated.cpp_driver ||
+          prev.driver_cpp,
         test_data: testDataStr || prev.test_data,
       }));
 
-      setMessage("✨ Content generated successfully!");
+      setMessage("Content generated successfully!");
       setIsError(false);
     } catch (err) {
       console.error(err);
-      setMessage(`❌ AI Generation failed: ${err}`);
+      setMessage(`AI Generation failed: ${err}`);
       setIsError(true);
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const testProblem = async () => {
+    if (
+      !formData.driver_python ||
+      !formData.python_template ||
+      !formData.test_data
+    ) {
+      setMessage("Need driver code, template, and test data to test");
+      setIsError(true);
+      return;
+    }
+
+    setIsTesting(true);
+    setTestOutput("");
+    setMessage("");
+
+    try {
+      // Use the python template as-is (it's the correct solution scaffold)
+      // The execute endpoint will pair it with the driver + test data
+      const res = await fetch(`${getApiBase()}/api/v1/execute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          language: "python",
+          code: formData.python_template,
+          problem_id: formData.slug || "__test__",
+          user_id: 0,
+          // Pass driver and test data for ad-hoc testing
+          driver_code: formData.driver_python,
+          test_data: formData.test_data,
+        }),
+      });
+
+      const data = await res.json();
+      const output = data.output || "No output";
+      setTestOutput(output);
+
+      if (data.exit_code === 0 && output.includes("CASE|")) {
+        const hasFailures = output.includes("|FAIL|");
+        if (hasFailures) {
+          setMessage("Test ran but some cases failed — check output below");
+          setIsError(true);
+        } else {
+          setMessage("All test cases passed! Driver is working correctly.");
+          setIsError(false);
+        }
+      } else if (data.status === "TLE") {
+        setMessage("Time Limit Exceeded during testing");
+        setIsError(true);
+      } else {
+        setMessage("Test execution failed — check output below");
+        setIsError(true);
+      }
+    } catch (err) {
+      setMessage(`Test failed: ${err}`);
+      setIsError(true);
+    } finally {
+      setIsTesting(false);
     }
   };
 
@@ -231,13 +278,13 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
   const [viewMode, setViewMode] = useState<"create" | "edit">("create");
 
   // Fetch problems on mount
-  useState(() => {
+  useEffect(() => {
     fetchProblems();
-  });
+  }, []);
 
   async function fetchProblems() {
     try {
-      const res = await fetch("http://localhost:9000/api/v1/problems");
+      const res = await fetch(`${getApiBase()}/api/v1/problems`);
       const data = await res.json();
       if (Array.isArray(data)) setProblems(data);
     } catch (e) {
@@ -266,7 +313,7 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
   const handleEditClick = async (slug: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`http://localhost:9000/api/v1/problems/${slug}`);
+      const res = await fetch(`${getApiBase()}/api/v1/problems/${slug}`);
       if (!res.ok) throw new Error("Failed to fetch problem details");
       const data = await res.json();
 
@@ -285,7 +332,7 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
       setMessage("");
     } catch (e) {
       console.error(e);
-      setMessage("❌ Failed to load problem");
+      setMessage("Failed to load problem");
       setIsError(true);
     } finally {
       setLoading(false);
@@ -299,14 +346,14 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
     setLoading(true);
     try {
       const res = await fetch(
-        `http://localhost:9000/api/v1/admin/problems/${formData.slug}`,
+        `${getApiBase()}/api/v1/admin/problems/${formData.slug}`,
         {
           method: "DELETE",
         },
       );
 
       if (res.ok) {
-        setMessage("✅ Problem deleted");
+        setMessage("Problem deleted");
         setIsError(false);
         fetchProblems();
         resetForm();
@@ -314,7 +361,7 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
         throw new Error("Delete failed");
       }
     } catch (e) {
-      setMessage("❌ Delete failed");
+      setMessage("Delete failed");
       setIsError(true);
     } finally {
       setLoading(false);
@@ -328,8 +375,8 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
 
     const url =
       viewMode === "create"
-        ? "http://localhost:9000/api/v1/admin/problems"
-        : `http://localhost:9000/api/v1/admin/problems/${formData.slug}`;
+        ? `${getApiBase()}/api/v1/admin/problems`
+        : `${getApiBase()}/api/v1/admin/problems/${formData.slug}`;
 
     const method = viewMode === "create" ? "POST" : "PUT";
 
@@ -345,18 +392,18 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
       if (res.ok) {
         setMessage(
           viewMode === "create"
-            ? `✅ Problem "${formData.title}" created!`
-            : `✅ Problem updated!`,
+            ? `Problem "${formData.title}" created!`
+            : `Problem updated!`,
         );
         setIsError(false);
         fetchProblems();
         if (viewMode === "create") resetForm();
       } else {
-        setMessage(`❌ ${data.error}`);
+        setMessage(`Error: ${data.error}`);
         setIsError(true);
       }
     } catch {
-      setMessage("❌ Connection failed");
+      setMessage("Connection failed");
       setIsError(true);
     } finally {
       setLoading(false);
@@ -399,7 +446,23 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
             Admin Panel
           </span>
           <button
-            onClick={() => router.push("/dashboard")}
+            onClick={() => router.push("/admin/dashboard")}
+            style={{
+              background:
+                "linear-gradient(135deg, rgba(139,92,246,0.2), rgba(59,130,246,0.2))",
+              border: "1px solid rgba(139,92,246,0.4)",
+              color: "#a78bfa",
+              padding: "0.25rem 0.75rem",
+              borderRadius: "4px",
+              cursor: "pointer",
+              fontWeight: 600,
+              fontSize: "0.8rem",
+            }}
+          >
+            Analytics
+          </button>
+          <button
+            onClick={() => router.push("/problems")}
             style={{
               background: "transparent",
               border: "1px solid var(--border-color)",
@@ -409,7 +472,7 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
               cursor: "pointer",
             }}
           >
-            ← Dashboard
+            Back
           </button>
         </div>
       </nav>
@@ -526,6 +589,41 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
                     Delete
                   </button>
                 )}
+              </div>
+            </div>
+
+            {/* AI Prompt Section */}
+            <div
+              style={{
+                marginBottom: "1.5rem",
+                padding: "1.25rem",
+                borderRadius: "8px",
+                background:
+                  "linear-gradient(135deg, rgba(139,92,246,0.1), rgba(59,130,246,0.1))",
+                border: "1px solid rgba(139,92,246,0.3)",
+              }}
+            >
+              <label
+                style={{
+                  ...labelStyle,
+                  color: "#a78bfa",
+                  marginBottom: "0.75rem",
+                }}
+              >
+                AI Prompt (describe the problem you want to generate)
+              </label>
+              <textarea
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+                placeholder="e.g. Generate a medium difficulty problem about finding the longest palindromic substring. Include edge cases for single character strings and strings with all same characters."
+                style={{
+                  ...textareaStyle,
+                  minHeight: "100px",
+                  marginBottom: "0.75rem",
+                  borderColor: "rgba(139,92,246,0.3)",
+                }}
+              />
+              <div style={{ display: "flex", gap: "0.75rem" }}>
                 <button
                   type="button"
                   onClick={generateWithAI}
@@ -534,7 +632,7 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
                     background: "linear-gradient(135deg, #8b5cf6, #3b82f6)",
                     border: "none",
                     color: "white",
-                    padding: "0.5rem 1rem",
+                    padding: "0.5rem 1.25rem",
                     borderRadius: "6px",
                     fontWeight: 600,
                     cursor: isGenerating ? "wait" : "pointer",
@@ -544,7 +642,7 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
                     opacity: isGenerating ? 0.7 : 1,
                   }}
                 >
-                  {isGenerating ? "🔮 Generating..." : "✨ Auto-Fill with AI"}
+                  {isGenerating ? "Generating..." : "Generate with AI"}
                 </button>
               </div>
             </div>
@@ -698,6 +796,57 @@ Ensure driver_cpp uses distinct regex for the specific input format of this new 
                     ? "Create Problem"
                     : "Update Problem"}
               </button>
+
+              {/* Test Button */}
+              <button
+                type="button"
+                onClick={testProblem}
+                disabled={isTesting}
+                style={{
+                  width: "100%",
+                  padding: "1rem",
+                  background: isTesting ? "#334155" : "rgba(59,130,246,0.2)",
+                  color: "#60a5fa",
+                  border: "1px solid #3b82f6",
+                  borderRadius: "6px",
+                  fontSize: "1rem",
+                  fontWeight: 600,
+                  cursor: isTesting ? "wait" : "pointer",
+                  marginTop: "0.5rem",
+                }}
+              >
+                {isTesting ? "Testing..." : "Test Problem (Run Driver)"}
+              </button>
+
+              {/* Test Output */}
+              {testOutput && (
+                <div
+                  style={{
+                    marginTop: "1rem",
+                    padding: "1rem",
+                    borderRadius: "6px",
+                    background: "var(--bg-editor)",
+                    border: "1px solid var(--border-color)",
+                    fontFamily: "monospace",
+                    fontSize: "0.85rem",
+                    color: "#e2e8f0",
+                    whiteSpace: "pre-wrap",
+                    maxHeight: "300px",
+                    overflowY: "auto",
+                  }}
+                >
+                  <div
+                    style={{
+                      color: "var(--text-secondary)",
+                      marginBottom: "0.5rem",
+                      fontSize: "0.75rem",
+                    }}
+                  >
+                    Test Output:
+                  </div>
+                  {testOutput}
+                </div>
+              )}
             </form>
           </div>
         </div>
