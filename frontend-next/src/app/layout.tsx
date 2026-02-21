@@ -2,8 +2,9 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "AlgoArena - Competitive Coding Platform",
-  description: "AI-Enhanced Competitive Coding Workspace",
+  title: "AlgoArena — Competitive Coding Platform",
+  description:
+    "Master algorithms and ace coding interviews with real-time code execution, AI-powered hints, and a VS Code–inspired editor.",
 };
 
 export default function RootLayout({
@@ -12,14 +13,26 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
-        <link
-          href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@400;500;600;700&display=swap"
-          rel="stylesheet"
+        {/* Inline script to set theme before first paint to avoid flash */}
+        <script
+          suppressHydrationWarning
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var t = localStorage.getItem('algoarena-theme') || 'one-dark';
+                  document.documentElement.setAttribute('data-theme', t);
+                } catch(e) {}
+              })();
+            `,
+          }}
         />
       </head>
-      <body suppressHydrationWarning>{children}</body>
+      <body>
+        {children}
+      </body>
     </html>
   );
 }

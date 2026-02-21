@@ -1,769 +1,227 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getApiBase } from "@/lib/api";
+import { getApiBase, fetchJSON } from "@/lib/api";
+import Navbar from "@/components/Navbar";
+import { IconAtom, IconTerminal, IconContainer, IconDatabase, IconRobot, IconWrench, IconLock, IconPalette, IconLightning, IconBarChart, IconGlobe } from "@/components/Icons";
+import type { ReactNode } from "react";
 
-interface AdminStats {
-  users: { total: number; new_today: number; active_today: number };
-  submissions: {
-    total: number;
-    today: number;
-    pass_count: number;
-    fail_count: number;
-  };
-  acceptance_rate: number;
-  problems: { total: number; by_difficulty: Record<string, number> };
-  hourly_activity: { hour: string; count: number }[];
-  language_distribution: Record<string, number>;
-  top_problems: {
-    slug: string;
-    title: string;
-    submissions: number;
-    acceptance: number;
-  }[];
-  recent_users: {
-    id: number;
-    username: string;
-    joined: string;
-    submissions: number;
-    solved: number;
-    last_active: string | null;
-  }[];
-}
+
+const THEMES = [
+  { id: "one-dark", name: "One Dark", bar: "#1e1e2e", bg: "#282a36", accent: "#cba6f7", text: "#a6adc8" },
+  { id: "github-light", name: "GitHub Light", bar: "#ffffff", bg: "#f6f8fa", accent: "#0969da", text: "#656d76" },
+  { id: "monokai", name: "Monokai Pro", bar: "#1e1f1c", bg: "#272822", accent: "#a6e22e", text: "#a9dc76" },
+  { id: "dracula", name: "Dracula", bar: "#282a36", bg: "#1e1f29", accent: "#bd93f9", text: "#6272a4" },
+  { id: "nord", name: "Nord", bar: "#2e3440", bg: "#3b4252", accent: "#88c0d0", text: "#7b88a1" },
+];
+
+const API_ROUTES = [
+  { method: "POST", badge: "post", path: "/api/v1/register", desc: "Create new user account", auth: "No" },
+  { method: "POST", badge: "post", path: "/api/v1/login", desc: "Authenticate and receive token", auth: "No" },
+  { method: "GET", badge: "get", path: "/api/v1/problems", desc: "List all problems with filters", auth: "Yes" },
+  { method: "GET", badge: "get", path: "/api/v1/problems/:slug", desc: "Get problem details by slug", auth: "Yes" },
+  { method: "POST", badge: "post", path: "/api/v1/execute", desc: "Run code against test cases", auth: "Yes" },
+  { method: "POST", badge: "post", path: "/api/v1/submit", desc: "Submit code for judging", auth: "Yes" },
+  { method: "GET", badge: "get", path: "/api/v1/submissions", desc: "Get user submission history", auth: "Yes" },
+  { method: "GET", badge: "get", path: "/api/v1/stats", desc: "Get user profile and stats", auth: "Yes" },
+  { method: "POST", badge: "post", path: "/api/v1/chat/:id", desc: "Get AI-powered hint for problem", auth: "Yes" },
+  { method: "POST", badge: "post", path: "/api/v1/admin/problems", desc: "Create a new problem (admin)", auth: "Admin" },
+  { method: "PUT", badge: "put", path: "/api/v1/admin/problems/:slug", desc: "Update a problem (admin)", auth: "Admin" },
+  { method: "DELETE", badge: "delete", path: "/api/v1/admin/problems/:id", desc: "Delete a problem (admin)", auth: "Admin" },
+];
+
+const STACK: { icon: ReactNode; title: string; sub: string; bg: string; items: string[] }[] = [
+  { icon: <IconAtom />, title: "Frontend", sub: "User Interface", bg: "rgba(99,102,241,0.15)", items: ["Next.js 16 (App Router)", "TypeScript 5", "Tailwind CSS 4", "Monaco Editor (Code)"] },
+  { icon: <IconTerminal />, title: "Backend", sub: "API Server", bg: "rgba(0,255,136,0.12)", items: ["Python 3.12 + Flask", "Flask-CORS", "psycopg2 PostgreSQL", "Gunicorn WSGI"] },
+  { icon: <IconContainer />, title: "Judge System", sub: "Code Execution", bg: "rgba(251,191,36,0.15)", items: ["Docker Containers", "Resource Limits (CPU/Mem)", "Python & C++ Drivers", "Sandboxed Execution"] },
+  { icon: <IconDatabase />, title: "Database", sub: "Data Layer", bg: "rgba(236,72,153,0.15)", items: ["PostgreSQL 16", "Users, Problems, Submissions", "Indexed Queries", "Docker Compose Setup"] },
+  { icon: <IconRobot />, title: "AI Assistant", sub: "Smart Hints", bg: "rgba(139,92,246,0.15)", items: ["Gemini API", "Context-Aware Prompting", "Hint System", "Code Review"] },
+  { icon: <IconWrench />, title: "DevOps", sub: "Infrastructure", bg: "rgba(59,130,246,0.15)", items: ["Docker Compose", "GitHub Actions CI/CD", "Environment Variables", "Health Checks"] },
+];
+
+const FEATURES: { icon: ReactNode; title: string; desc: string; bg: string }[] = [
+  { icon: <IconLock />, title: "Sandboxed Execution", desc: "User code runs in isolated Docker containers with strict CPU, memory, and time limits.", bg: "rgba(0,255,136,0.12)" },
+  { icon: <IconPalette />, title: "5 VS Code Themes", desc: "One Dark, GitHub Light, Monokai Pro, Dracula, and Nord — persisted in localStorage.", bg: "rgba(99,102,241,0.15)" },
+  { icon: <IconLightning />, title: "Real-Time Judging", desc: "Instant feedback with test case results, runtime metrics, and memory usage stats.", bg: "rgba(251,191,36,0.15)" },
+  { icon: <IconRobot />, title: "AI-Powered Hints", desc: "Contextual AI assistance that provides hints without giving away the full solution.", bg: "rgba(236,72,153,0.15)" },
+  { icon: <IconBarChart />, title: "Progress Tracking", desc: "GitHub-style contribution heatmaps, streak counters, badges, and leaderboard rankings.", bg: "rgba(139,92,246,0.15)" },
+  { icon: <IconGlobe />, title: "Multi-Language", desc: "Supports Python 3, C++ 17 with syntax-highlighted Monaco editor.", bg: "rgba(59,130,246,0.15)" },
+];
 
 export default function AdminDashboard() {
-  const [stats, setStats] = useState<AdminStats | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [userSearch, setUserSearch] = useState("");
-  const [refreshKey, setRefreshKey] = useState(0);
   const router = useRouter();
+  const [activeTheme, setActiveTheme] = useState("one-dark");
 
   useEffect(() => {
-    fetch(`${getApiBase()}/api/v1/admin/stats`)
-      .then((r) => r.json())
-      .then((data) => {
-        setStats(data);
-        setLoading(false);
+    const uid = localStorage.getItem("user_id");
+    if (!uid) { router.push("/login"); return; }
+    // Verify admin status from server
+    fetchJSON<{ is_admin?: boolean }>(`${getApiBase()}/api/v1/check-admin?user_id=${uid}`)
+      .then(data => {
+        if (!data?.is_admin) { router.push("/problems"); return; }
+        localStorage.setItem("is_admin", "true");
       })
-      .catch((err) => {
-        console.error("Failed to load admin stats", err);
-        setLoading(false);
-      });
-  }, [refreshKey]);
-
-  const maxHourly = stats
-    ? Math.max(...stats.hourly_activity.map((h) => h.count), 1)
-    : 1;
-
-  const totalLang = stats
-    ? Object.values(stats.language_distribution).reduce((a, b) => a + b, 0) || 1
-    : 1;
-
-  const filteredUsers = stats
-    ? stats.recent_users.filter((u) =>
-        u.username.toLowerCase().includes(userSearch.toLowerCase()),
-      )
-    : [];
-
-  const diffColors: Record<string, string> = {
-    Easy: "#4ade80",
-    Medium: "#fbbf24",
-    Hard: "#f87171",
-  };
-
-  const langColors: Record<string, string> = {
-    python: "#3b82f6",
-    cpp: "#f59e0b",
-    javascript: "#10b981",
-    java: "#ef4444",
-  };
-
-  const formatDate = (d: string | null) => {
-    if (!d) return "Never";
-    return new Date(d).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
-  if (loading) {
-    return (
-      <>
-        <nav className="navbar">
-          <div className="logo">AlgoArena</div>
-          <span style={{ color: "var(--accent-purple)", fontWeight: 600 }}>
-            Admin Analytics
-          </span>
-        </nav>
-        <div
-          className="main-container"
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <div style={{ color: "var(--text-secondary)", fontSize: "1.2rem" }}>
-            Loading analytics...
-          </div>
-        </div>
-      </>
-    );
-  }
-
-  if (!stats) return null;
+      .catch(() => router.push("/problems"));
+    const saved = localStorage.getItem("algoarena-theme") || "one-dark";
+    setActiveTheme(saved);
+  }, [router]);
 
   return (
     <>
-      {/* Navbar */}
-      <nav className="navbar">
-        <div className="logo">AlgoArena</div>
-        <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-          <span
-            style={{
-              color: "var(--accent-purple)",
-              fontWeight: 600,
-              fontSize: "0.9rem",
-            }}
-          >
-            Admin Analytics
-          </span>
-          <button onClick={() => router.push("/admin")} className="nav-btn">
-            Problem Manager
-          </button>
-          <button onClick={() => router.push("/problems")} className="nav-btn">
-            Back
-          </button>
-          <button
-            onClick={() => setRefreshKey((k) => k + 1)}
-            className="nav-btn"
-            style={{
-              background: "rgba(139, 92, 246, 0.15)",
-              borderColor: "rgba(139, 92, 246, 0.4)",
-              color: "#a78bfa",
-            }}
-          >
-            Refresh
-          </button>
+      <div className="bg-animated"><div className="orb" /><div className="orb" /><div className="orb" /></div>
+      <div className="bg-grid" />
+      <Navbar />
+
+      <div className="overview-hero fade-in-up">
+        <h1>Technical Overview</h1>
+        <p>A deep dive into AlgoArena&apos;s architecture, technology stack, API design, and the design system powering the user interface.</p>
+      </div>
+
+      <div className="overview-content">
+        {/* Architecture */}
+        <div className="section fade-in-up">
+          <div className="section-heading">
+            <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+            System Architecture
+          </div>
+          <div className="arch-diagram">
+            <div className="arch-flow">
+              <div className="arch-node">
+                <div className="arch-node-icon" style={{ background: "rgba(99,102,241,0.15)" }}><IconGlobe /></div>
+                <h4>Next.js Frontend</h4>
+                <p>React + TypeScript</p>
+              </div>
+              <div className="arch-arrow">→</div>
+              <div className="arch-node">
+                <div className="arch-node-icon" style={{ background: "rgba(0,255,136,0.12)" }}><IconLightning /></div>
+                <h4>Flask API</h4>
+                <p>Python Backend</p>
+              </div>
+              <div className="arch-arrow">→</div>
+              <div className="arch-node">
+                <div className="arch-node-icon" style={{ background: "rgba(251,191,36,0.15)" }}><IconContainer /></div>
+                <h4>Docker Judge</h4>
+                <p>Sandboxed Executor</p>
+              </div>
+              <div className="arch-arrow">→</div>
+              <div className="arch-node">
+                <div className="arch-node-icon" style={{ background: "rgba(236,72,153,0.15)" }}><IconDatabase /></div>
+                <h4>PostgreSQL</h4>
+                <p>Database</p>
+              </div>
+            </div>
+          </div>
         </div>
-      </nav>
 
-      <div
-        className="main-container"
-        style={{ display: "block", overflowY: "auto", padding: "2rem" }}
-      >
-        <div style={{ maxWidth: "1100px", margin: "0 auto" }}>
-          {/* KPI Cards */}
-          <div className="admin-kpi-row">
-            {/* Users */}
-            <div className="admin-kpi-card">
-              <div
-                className="admin-kpi-icon-styled"
-                style={{ background: "rgba(139, 92, 246, 0.15)" }}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#a78bfa"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
-                  <circle cx="9" cy="7" r="4"></circle>
-                  <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
-                  <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
-                </svg>
-              </div>
-              <div className="admin-kpi-body">
-                <span className="admin-kpi-label">Total Users</span>
-                <div className="admin-kpi-value" style={{ color: "#a78bfa" }}>
-                  {stats.users.total}
+        {/* Tech Stack */}
+        <div className="section fade-in-up">
+          <div className="section-heading">
+            <svg viewBox="0 0 24 24"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+            Technology Stack
+          </div>
+          <div className="stack-grid stagger">
+            {STACK.map((s) => (
+              <div key={s.title} className="stack-card">
+                <div className="stack-card-header">
+                  <div className="stack-card-icon" style={{ background: s.bg }}>{s.icon}</div>
+                  <div><h4>{s.title}</h4><p>{s.sub}</p></div>
                 </div>
-                <div className="admin-kpi-meta">
-                  <span
-                    className="admin-kpi-badge"
-                    style={{
-                      background: "rgba(74, 222, 128, 0.15)",
-                      color: "#4ade80",
-                    }}
-                  >
-                    +{stats.users.new_today} today
-                  </span>
-                  <span
-                    className="admin-kpi-badge"
-                    style={{
-                      background: "rgba(59, 130, 246, 0.15)",
-                      color: "#60a5fa",
-                    }}
-                  >
-                    {stats.users.active_today} active
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Submissions */}
-            <div className="admin-kpi-card">
-              <div
-                className="admin-kpi-icon-styled"
-                style={{ background: "rgba(59, 130, 246, 0.15)" }}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#60a5fa"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                  <polyline points="14 2 14 8 20 8"></polyline>
-                  <line x1="16" y1="13" x2="8" y2="13"></line>
-                  <line x1="16" y1="17" x2="8" y2="17"></line>
-                  <polyline points="10 9 9 9 8 9"></polyline>
-                </svg>
-              </div>
-              <div className="admin-kpi-body">
-                <span className="admin-kpi-label">Submissions Today</span>
-                <div className="admin-kpi-value" style={{ color: "#60a5fa" }}>
-                  {stats.submissions.today}
-                </div>
-                <div className="admin-kpi-meta">
-                  <span
-                    style={{
-                      color: "var(--text-secondary)",
-                      fontSize: "0.75rem",
-                    }}
-                  >
-                    {stats.submissions.total} total
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Acceptance Rate */}
-            <div className="admin-kpi-card">
-              <div
-                className="admin-kpi-icon-styled"
-                style={{ background: "rgba(16, 185, 129, 0.15)" }}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#4ade80"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              </div>
-              <div className="admin-kpi-body">
-                <span className="admin-kpi-label">Acceptance Rate</span>
-                <div className="admin-kpi-value" style={{ color: "#4ade80" }}>
-                  {stats.acceptance_rate}%
-                </div>
-                <div className="stats-bar" style={{ marginTop: "0.5rem" }}>
-                  <div
-                    className="stats-bar-fill"
-                    style={{
-                      width: `${stats.acceptance_rate}%`,
-                      background: "linear-gradient(90deg, #10b981, #4ade80)",
-                    }}
-                  />
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    marginTop: "0.35rem",
-                  }}
-                >
-                  <span style={{ color: "#4ade80", fontSize: "0.7rem" }}>
-                    Pass: {stats.submissions.pass_count}
-                  </span>
-                  <span style={{ color: "#f87171", fontSize: "0.7rem" }}>
-                    Fail: {stats.submissions.fail_count}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Problems */}
-            <div className="admin-kpi-card">
-              <div
-                className="admin-kpi-icon-styled"
-                style={{ background: "rgba(251, 191, 36, 0.15)" }}
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="#fbbf24"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
-                  <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
-                </svg>
-              </div>
-              <div className="admin-kpi-body">
-                <span className="admin-kpi-label">Problems</span>
-                <div className="admin-kpi-value" style={{ color: "#fbbf24" }}>
-                  {stats.problems.total}
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    gap: "0.4rem",
-                    marginTop: "0.35rem",
-                    flexWrap: "wrap",
-                  }}
-                >
-                  {["Easy", "Medium", "Hard"].map((d) => (
-                    <span
-                      key={d}
-                      style={{
-                        fontSize: "0.7rem",
-                        color: diffColors[d],
-                        background: `${diffColors[d]}18`,
-                        padding: "0.1rem 0.4rem",
-                        borderRadius: "8px",
-                      }}
-                    >
-                      {d}: {stats.problems.by_difficulty[d] || 0}
-                    </span>
+                <div className="tech-list">
+                  {s.items.map((item) => (
+                    <div key={item} className="tech-item"><div className="tech-dot" />{item}</div>
                   ))}
                 </div>
               </div>
-            </div>
+            ))}
           </div>
+        </div>
 
-          {/* Hourly Activity Chart */}
-          <div className="admin-chart-card">
-            <div className="admin-chart-header">
-              <h3 className="admin-chart-title">Today's Activity</h3>
-              <span
-                style={{ color: "var(--text-secondary)", fontSize: "0.75rem" }}
-              >
-                {stats.submissions.today} submissions today
-              </span>
-            </div>
-            <div className="admin-hourly-chart">
-              {stats.hourly_activity.map((h, i) => {
-                const pct = (h.count / maxHourly) * 100;
-                const currentHour = new Date().getHours();
-                const isCurrent = i === currentHour;
-                return (
-                  <div
-                    key={i}
-                    className="admin-hourly-col"
-                    title={`${h.hour}: ${h.count} submissions`}
-                  >
-                    <div className="admin-hourly-bar-wrap">
-                      <div
-                        className="admin-hourly-bar"
-                        style={{
-                          height: `${Math.max(pct, 3)}%`,
-                          background: isCurrent
-                            ? "linear-gradient(180deg, #fbbf24, #f59e0b)"
-                            : h.count > 0
-                              ? "linear-gradient(180deg, #8b5cf6, #3b82f6)"
-                              : "#1e293b",
-                          boxShadow: isCurrent
-                            ? "0 0 8px rgba(251,191,36,0.4)"
-                            : "none",
-                        }}
-                      />
-                    </div>
-                    {i % 3 === 0 && (
-                      <span className="admin-hourly-label">
-                        {h.hour.replace(":00", "")}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+        {/* Key Features */}
+        <div className="section fade-in-up">
+          <div className="section-heading">
+            <svg viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            Key Features
           </div>
-
-          {/* Two Column: Language + Top Problems */}
-          <div className="admin-two-col">
-            {/* Language Distribution */}
-            <div className="admin-chart-card">
-              <h3 className="admin-chart-title">Language Distribution</h3>
-              {Object.keys(stats.language_distribution).length === 0 ? (
-                <div
-                  style={{
-                    color: "var(--text-secondary)",
-                    padding: "2rem",
-                    textAlign: "center",
-                  }}
-                >
-                  No submissions yet
-                </div>
-              ) : (
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "1rem",
-                    marginTop: "1rem",
-                  }}
-                >
-                  {/* Stacked bar */}
-                  <div
-                    style={{
-                      display: "flex",
-                      borderRadius: "8px",
-                      overflow: "hidden",
-                      height: "32px",
-                    }}
-                  >
-                    {Object.entries(stats.language_distribution).map(
-                      ([lang, count]) => (
-                        <div
-                          key={lang}
-                          style={{
-                            width: `${(count / totalLang) * 100}%`,
-                            background: langColors[lang] || "#64748b",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: "0.7rem",
-                            color: "white",
-                            fontWeight: 600,
-                            minWidth: "30px",
-                            transition: "width 0.5s ease",
-                          }}
-                        >
-                          {Math.round((count / totalLang) * 100)}%
-                        </div>
-                      ),
-                    )}
-                  </div>
-                  {/* Legend */}
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: "0.5rem",
-                    }}
-                  >
-                    {Object.entries(stats.language_distribution).map(
-                      ([lang, count]) => (
-                        <div
-                          key={lang}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                          }}
-                        >
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "0.5rem",
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: "12px",
-                                height: "12px",
-                                borderRadius: "3px",
-                                background: langColors[lang] || "#64748b",
-                              }}
-                            />
-                            <span
-                              style={{
-                                color: "white",
-                                fontSize: "0.85rem",
-                                textTransform: "capitalize",
-                              }}
-                            >
-                              {lang}
-                            </span>
-                          </div>
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "0.75rem",
-                            }}
-                          >
-                            <span
-                              style={{
-                                color: "var(--text-secondary)",
-                                fontSize: "0.8rem",
-                              }}
-                            >
-                              {count} submissions
-                            </span>
-                            <span
-                              style={{
-                                color: langColors[lang] || "#64748b",
-                                fontWeight: 600,
-                                fontSize: "0.85rem",
-                              }}
-                            >
-                              {Math.round((count / totalLang) * 100)}%
-                            </span>
-                          </div>
-                        </div>
-                      ),
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Top Problems */}
-            <div className="admin-chart-card">
-              <h3 className="admin-chart-title">Top Problems</h3>
-              {stats.top_problems.length === 0 ? (
-                <div
-                  style={{
-                    color: "var(--text-secondary)",
-                    padding: "2rem",
-                    textAlign: "center",
-                  }}
-                >
-                  No submissions yet
-                </div>
-              ) : (
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: "0.75rem",
-                    marginTop: "1rem",
-                  }}
-                >
-                  {stats.top_problems.map((p, i) => (
-                    <div key={p.slug} className="admin-top-problem-row">
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.5rem",
-                          flex: 1,
-                        }}
-                      >
-                        <span
-                          style={{
-                            color: "var(--text-secondary)",
-                            fontSize: "0.75rem",
-                            minWidth: "18px",
-                          }}
-                        >
-                          #{i + 1}
-                        </span>
-                        <span
-                          style={{
-                            color: "white",
-                            fontSize: "0.85rem",
-                            fontWeight: 500,
-                          }}
-                        >
-                          {p.title}
-                        </span>
-                      </div>
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: "0.75rem",
-                          minWidth: "160px",
-                          justifyContent: "flex-end",
-                        }}
-                      >
-                        <div style={{ width: "60px" }}>
-                          <div className="stats-bar" style={{ height: "4px" }}>
-                            <div
-                              className="stats-bar-fill"
-                              style={{
-                                width: `${p.acceptance}%`,
-                                background:
-                                  p.acceptance >= 60
-                                    ? "#4ade80"
-                                    : p.acceptance >= 30
-                                      ? "#fbbf24"
-                                      : "#f87171",
-                              }}
-                            />
-                          </div>
-                        </div>
-                        <span
-                          style={{
-                            fontSize: "0.75rem",
-                            fontWeight: 600,
-                            color:
-                              p.acceptance >= 60
-                                ? "#4ade80"
-                                : p.acceptance >= 30
-                                  ? "#fbbf24"
-                                  : "#f87171",
-                          }}
-                        >
-                          {p.acceptance}%
-                        </span>
-                        <span
-                          style={{
-                            color: "var(--text-secondary)",
-                            fontSize: "0.7rem",
-                          }}
-                        >
-                          {p.submissions} subs
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+          <div className="feature-grid-overview stagger">
+            {FEATURES.map((f) => (
+              <div key={f.title} className="feature-card-ov">
+                <div className="ft-icon" style={{ background: f.bg }}>{f.icon}</div>
+                <h4>{f.title}</h4>
+                <p>{f.desc}</p>
+              </div>
+            ))}
           </div>
+        </div>
 
-          {/* Users Table */}
-          <div className="admin-chart-card" style={{ marginTop: "1rem" }}>
-            <div className="admin-chart-header">
-              <h3 className="admin-chart-title">Users</h3>
-              <input
-                type="text"
-                placeholder="Search users..."
-                value={userSearch}
-                onChange={(e) => setUserSearch(e.target.value)}
-                className="search-input"
-                style={{
-                  maxWidth: "250px",
-                  padding: "0.4rem 0.75rem",
-                  fontSize: "0.8rem",
-                }}
-              />
-            </div>
-            <div className="admin-users-table-wrap">
-              <table className="admin-users-table">
-                <thead>
-                  <tr>
-                    <th>User</th>
-                    <th>Submissions</th>
-                    <th>Solved</th>
-                    <th>Acceptance</th>
-                    <th>Joined</th>
-                    <th>Last Active</th>
+        {/* API Reference */}
+        <div className="section fade-in-up">
+          <div className="section-heading">
+            <svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+            API Endpoints
+          </div>
+          <div className="api-table-wrap">
+            <table className="api-table">
+              <thead>
+                <tr><th>Method</th><th>Endpoint</th><th>Description</th><th>Auth</th></tr>
+              </thead>
+              <tbody>
+                {API_ROUTES.map((r, i) => (
+                  <tr key={i}>
+                    <td><span className={`method-badge ${r.badge}`}>{r.method}</span></td>
+                    <td className="endpoint-path">{r.path}</td>
+                    <td>{r.desc}</td>
+                    <td>{r.auth}</td>
                   </tr>
-                </thead>
-                <tbody>
-                  {filteredUsers.map((u) => {
-                    const acc =
-                      u.submissions > 0
-                        ? Math.round((u.solved / u.submissions) * 100)
-                        : 0;
-                    return (
-                      <tr key={u.id}>
-                        <td>
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "0.5rem",
-                            }}
-                          >
-                            <div
-                              style={{
-                                width: "28px",
-                                height: "28px",
-                                borderRadius: "50%",
-                                background:
-                                  "linear-gradient(135deg, #8b5cf6, #3b82f6)",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                fontSize: "0.7rem",
-                                fontWeight: 700,
-                                color: "white",
-                                flexShrink: 0,
-                              }}
-                            >
-                              {u.username.charAt(0).toUpperCase()}
-                            </div>
-                            <span style={{ color: "white", fontWeight: 500 }}>
-                              {u.username}
-                            </span>
-                          </div>
-                        </td>
-                        <td>{u.submissions}</td>
-                        <td>
-                          <span style={{ color: "#a78bfa", fontWeight: 600 }}>
-                            {u.solved}
-                          </span>
-                        </td>
-                        <td>
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: "0.5rem",
-                            }}
-                          >
-                            <div
-                              className="stats-bar"
-                              style={{ width: "50px", height: "4px" }}
-                            >
-                              <div
-                                className="stats-bar-fill"
-                                style={{
-                                  width: `${acc}%`,
-                                  background:
-                                    acc >= 60
-                                      ? "#4ade80"
-                                      : acc >= 30
-                                        ? "#fbbf24"
-                                        : "#f87171",
-                                }}
-                              />
-                            </div>
-                            <span
-                              style={{
-                                fontSize: "0.75rem",
-                                color:
-                                  acc >= 60
-                                    ? "#4ade80"
-                                    : acc >= 30
-                                      ? "#fbbf24"
-                                      : "#f87171",
-                              }}
-                            >
-                              {acc}%
-                            </span>
-                          </div>
-                        </td>
-                        <td>{u.joined ? formatDate(u.joined) : "—"}</td>
-                        <td>{formatDate(u.last_active)}</td>
-                      </tr>
-                    );
-                  })}
-                  {filteredUsers.length === 0 && (
-                    <tr>
-                      <td
-                        colSpan={6}
-                        style={{
-                          textAlign: "center",
-                          color: "var(--text-secondary)",
-                          padding: "2rem",
-                        }}
-                      >
-                        No users found
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Design System */}
+        <div className="section fade-in-up">
+          <div className="section-heading">
+            <svg viewBox="0 0 24 24"><circle cx="13.5" cy="6.5" r="2.5"/><path d="M17.5 10.5h3.7a1.7 1.7 0 0 1 0 3.4h-3.7"/><circle cx="8.5" cy="14.5" r="2.5"/><path d="M2.8 10.5h3.7"/><circle cx="17" cy="18" r="2"/></svg>
+            Design System — Themes
+          </div>
+          <div className="theme-preview-row">
+            {THEMES.map((t) => (
+              <div
+                key={t.id}
+                className={`theme-preview-card${activeTheme === t.id ? " active" : ""}`}
+                onClick={() => {
+                  document.documentElement.setAttribute("data-theme", t.id);
+                  localStorage.setItem("algoarena-theme", t.id);
+                  setActiveTheme(t.id);
+                }}
+              >
+                <div className="theme-preview-bar" style={{ background: t.bar }}>
+                  <div className="theme-preview-dot" style={{ background: "#ff5f57" }} />
+                  <div className="theme-preview-dot" style={{ background: "#febc2e" }} />
+                  <div className="theme-preview-dot" style={{ background: "#28c840" }} />
+                </div>
+                <div className="theme-preview-body" style={{ background: t.bg }}>
+                  <div className="theme-preview-line" style={{ background: t.accent, width: "60%" }} />
+                  <div className="theme-preview-line" style={{ background: t.text, width: "80%" }} />
+                  <div className="theme-preview-line" style={{ background: t.text, width: "45%" }} />
+                </div>
+                <div className="theme-preview-label" style={{ background: t.bar, color: t.accent }}>{t.name}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{
+            marginTop: 20, padding: 20, background: "var(--glass-bg)",
+            border: "1px solid var(--glass-border)", borderRadius: "var(--radius-lg)",
+            backdropFilter: "blur(10px)",
+          }}>
+            <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.8, marginBottom: 12 }}>
+              The design system uses <strong style={{ color: "var(--text-primary)" }}>CSS custom properties</strong> (200+ variables per theme) for instant theme switching without page reload. Themes are persisted via <code style={{ background: "var(--bg-input)", padding: "2px 6px", borderRadius: 4, fontSize: 12 }}>localStorage</code> under the <code style={{ background: "var(--bg-input)", padding: "2px 6px", borderRadius: 4, fontSize: 12 }}>algoarena-theme</code> key.
+            </p>
+            <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.8 }}>
+              <strong style={{ color: "var(--text-primary)" }}>Typography:</strong> Inter (300–900) for UI, JetBrains Mono (400–700) for code.{" "}
+              <strong style={{ color: "var(--text-primary)" }}>Effects:</strong> Glassmorphism with backdrop-filter blur, animated gradient orbs, grid overlays, and staggered entry animations.
+            </p>
           </div>
         </div>
       </div>

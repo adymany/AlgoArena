@@ -12,7 +12,7 @@ import shutil
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
+# Load environment variables
 load_dotenv()
 
 # Base directory is where this script lives (backend/)
@@ -362,9 +362,18 @@ def init_db():
                         id SERIAL PRIMARY KEY,
                         username VARCHAR(50) UNIQUE NOT NULL,
                         password_hash TEXT NOT NULL,
+                        is_admin BOOLEAN DEFAULT FALSE,
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 """)
+
+                # MIGRATION: Ensure 'is_admin' column exists for existing tables
+                try:
+                    execute_query(cur, "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE")
+                    conn.commit()
+                except Exception as ex:
+                    print("Migration warning (is_admin):", ex)
+                    conn.rollback()
 
                 # Problems Table
                 execute_query(cur, """
@@ -423,8 +432,16 @@ def init_db():
                 execute_query(cur, "SELECT id FROM users WHERE username = %s", ("admin",))
                 if not cur.fetchone():
                     hashed = generate_password_hash("admin123")
-                    execute_query(cur, "INSERT INTO users (username, password_hash) VALUES (%s, %s)", ("admin", hashed))
+                    execute_query(cur, "INSERT INTO users (username, password_hash, is_admin) VALUES (%s, %s, %s)", ("admin", hashed, True))
                     print("Default user 'admin' created (password: admin123)")
+                else:
+                    # Ensure existing admin user has is_admin flag
+                    execute_query(cur, "UPDATE users SET is_admin = TRUE WHERE username = %s", ("admin",))
+                
+                # Also grant admin to specific users
+                for admin_user in ["23se02cs093@ppsu.ac.in"]:
+                    execute_query(cur, "UPDATE users SET is_admin = TRUE WHERE username = %s", (admin_user,))
+                
                 conn.commit()
                 
                 cur.close()
@@ -518,6 +535,38 @@ def seed_problems(cur):
 init_db()
 
 # --- Auth Endpoints ---
+@app.route("/api/v1/check-admin", methods=["GET"])
+def check_admin():
+    user_id = request.args.get("user_id")
+    if not user_id:
+        return jsonify({"is_admin": False}), 200
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, "SELECT COALESCE(is_admin, FALSE) FROM users WHERE id = %s", (user_id,))
+        row = cur.fetchone()
+        return jsonify({"is_admin": bool(row[0]) if row else False}), 200
+    finally:
+        conn.close()
+
+@app.route("/api/v1/admin/set-admin", methods=["POST"])
+def set_admin():
+    data = request.json
+    target_username = data.get("username")
+    is_admin = data.get("is_admin", True)
+    if not target_username:
+        return jsonify({"error": "username required"}), 400
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, "UPDATE users SET is_admin = %s WHERE username = %s", (is_admin, target_username))
+        conn.commit()
+        if cur.rowcount == 0:
+            return jsonify({"error": "User not found"}), 404
+        return jsonify({"message": f"User {target_username} admin status set to {is_admin}"}), 200
+    finally:
+        conn.close()
+
 @app.route("/api/v1/register", methods=["POST"])
 def register():
     data = request.json
@@ -557,12 +606,12 @@ def login():
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        execute_query(cur, "SELECT id, password_hash FROM users WHERE username = %s", (username,))
+        execute_query(cur, "SELECT id, password_hash, COALESCE(is_admin, FALSE) FROM users WHERE username = %s", (username,))
         user = cur.fetchone()
         
         if user and check_password_hash(user[1], password):
             print(f"Login success: {username}")
-            return jsonify({"message": "Login successful", "user_id": user[0], "username": username}), 200
+            return jsonify({"message": "Login successful", "user_id": user[0], "username": username, "is_admin": bool(user[2])}), 200
         else:
             print(f"Login failed: {username}")
             return jsonify({"error": "Invalid credentials"}), 401
@@ -642,21 +691,44 @@ def get_stats():
             solved_in_diff = cur.fetchone()[0]
             by_difficulty[diff] = {"total": total, "solved": solved_in_diff}
 
-        # Recent activity - last 7 days
+        # Recent activity - full year (365 days)
+        from datetime import datetime, timedelta
         execute_query(cur, """
             SELECT DATE(created_at) as day, COUNT(*) 
             FROM submissions 
-            WHERE user_id = %s AND created_at >= CURRENT_DATE - INTERVAL '6 days'
+            WHERE user_id = %s AND created_at >= CURRENT_DATE - INTERVAL '364 days'
             GROUP BY DATE(created_at) 
             ORDER BY day ASC
         """, (user_id,))
         activity_map = {str(row[0]): row[1] for row in cur.fetchall()}
         
-        from datetime import datetime, timedelta
+        today = datetime.now()
         recent_activity = []
-        for i in range(6, -1, -1):
-            day = (datetime.now() - timedelta(days=i)).strftime('%Y-%m-%d')
+        for i in range(364, -1, -1):
+            day = (today - timedelta(days=i)).strftime('%Y-%m-%d')
             recent_activity.append({"date": day, "count": activity_map.get(day, 0)})
+
+        # Streaks
+        current_streak = 0
+        longest_streak = 0
+        streak = 0
+        for i in range(364, -1, -1):
+            day = (today - timedelta(days=i)).strftime('%Y-%m-%d')
+            if activity_map.get(day, 0) > 0:
+                streak += 1
+                longest_streak = max(longest_streak, streak)
+            else:
+                streak = 0
+        # current streak: count backwards from today
+        for i in range(0, 365):
+            day = (today - timedelta(days=i)).strftime('%Y-%m-%d')
+            if activity_map.get(day, 0) > 0:
+                current_streak += 1
+            else:
+                break
+
+        # Active days count
+        active_days = sum(1 for v in activity_map.values() if v > 0)
 
         return jsonify({
             "total_problems": total_problems,
@@ -665,7 +737,10 @@ def get_stats():
             "pass_rate": pass_rate,
             "total_submissions": total_submissions,
             "by_difficulty": by_difficulty,
-            "recent_activity": recent_activity
+            "recent_activity": recent_activity,
+            "current_streak": current_streak,
+            "longest_streak": longest_streak,
+            "active_days": active_days
         })
     finally:
         conn.close()
@@ -702,116 +777,26 @@ def get_submissions():
     finally:
         conn.close()
 
-@app.route("/api/v1/submit", methods=["POST"])
-def submit_code():
-    data = request.json
-    user_id = data.get("user_id")
-    problem_id = data.get("problem_id")
-    language = data.get("language")
-    code = data.get("code")
-    
-    print(f"Submission: User={user_id}, Problem={problem_id}")
-    
-    if not all([user_id, problem_id, language, code]):
-        return jsonify({"error": "Missing required fields"}), 400
-    
-    conn = get_db_connection()
-    try:
-        cur = conn.cursor()
-        execute_query(cur, 
-            "INSERT INTO submissions (user_id, problem_id, language, code, status) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-            (user_id, problem_id, language, code, "Submitted")
-        )
-        sub_id = cur.fetchone()[0]
-        conn.commit()
-        print(f"Submission saved with ID: {sub_id}")
-        return jsonify({"message": "Submitted successfully", "submission_id": sub_id}), 201
-    except Exception as e:
-        print(f"Submit error: {e}")
-        return jsonify({"error": str(e)}), 500
-    finally:
-        conn.close()
-
-# --- Chat Endpoints ---
-@app.route("/api/v1/chat/save", methods=["POST"])
-def save_chat():
-    data = request.json
-    user_id = data.get("user_id")
-    problem_id = data.get("problem_id")
-    history = data.get("history") 
-    
-    print(f"Saving chat for User {user_id}, Problem {problem_id}")
-    
-    conn = get_db_connection()
-    try:
-        cur = conn.cursor()
-        history_json = json.dumps(history)
-        execute_query(cur, """
-            INSERT INTO chat_sessions (user_id, problem_id, history) 
-            VALUES (%s, %s, %s)
-            ON CONFLICT (user_id, problem_id) 
-            DO UPDATE SET history = EXCLUDED.history, updated_at = CURRENT_TIMESTAMP
-        """, (user_id, problem_id, history_json))
-        conn.commit()
-        return jsonify({"status": "saved"}), 200
-    except Exception as e:
-        print(f"Save chat error: {e}")
-        return jsonify({"error": str(e)}), 500
-    finally:
-        conn.close()
-
-@app.route("/api/v1/chat/<problem_id>", methods=["GET"])
-def get_chat(problem_id):
-    user_id = request.args.get("user_id")
-    print(f"Loading chat for User {user_id}, Problem {problem_id}")
-
-    if not user_id:
-        return jsonify([])
-
-    conn = get_db_connection()
-    try:
-        cur = conn.cursor()
-        execute_query(cur, "SELECT history FROM chat_sessions WHERE user_id = %s AND problem_id = %s", (user_id, problem_id))
-        row = cur.fetchone()
-        if row:
-             return jsonify(row[0]) 
-        return jsonify([])
-    finally:
-        conn.close()
-
-# --- Execution Endpoint ---
-@app.route("/api/v1/execute", methods=["POST"])
-def run_code():
-    data = request.json
-    lang = data["language"]
-    user_code = data["code"]
-    pid = data.get("problem_id", "")
-    user_id = data.get("user_id")
-    
-    # Optional ad-hoc driver/test data (for admin testing before saving)
-    adhoc_driver = data.get("driver_code")
-    adhoc_test_data = data.get("test_data")
-    
-    print(f"Execution request: Lang={lang}, Problem={pid}, User={user_id}, AdHoc={'yes' if adhoc_driver else 'no'}")
-    
+# Helper: Execute code in Docker
+def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=None, adhoc_test_data=None):
     fname = "solution.py"
     cmd = ""
 
     if lang == "python":
         fname = "solution.py"
-        if pid != "" or adhoc_driver:
+        if problem_id != "" or adhoc_driver:
             cmd = "python3 -u driver.py < test_data.txt"
         else:
             cmd = "python3 solution.py"
             
     elif lang == "cpp":
         fname = "solution.cpp"
-        if pid != "" or adhoc_driver:
+        if problem_id != "" or adhoc_driver:
             cmd = "g++ -o solution driver.cpp -I/home/sandbox && ./solution < test_data.txt"
         else:
             cmd = "g++ -o solution solution.cpp && ./solution"
     else:
-        return jsonify({"error": "bad language"})
+        return {"error": "bad language"}, 400
 
     my_config = {
         "image": "judger:latest",
@@ -829,13 +814,13 @@ def run_code():
         t = tarfile.open(fileobj=stream, mode='w')
         
         info = tarfile.TarInfo(name=fname)
-        b_code = user_code.encode('utf-8')
+        b_code = code.encode('utf-8')
         info.size = len(b_code)
         t.addfile(info, io.BytesIO(b_code))
         
         # Use ad-hoc driver/test data if provided, otherwise load from disk
         if adhoc_driver and adhoc_test_data:
-            print("  Using ad-hoc driver and test data from request body")
+            print("  Using ad-hoc driver and test data")
             d_name = "driver.py" if lang == "python" else "driver.cpp"
             d_data = adhoc_driver.encode('utf-8')
             info2 = tarfile.TarInfo(name=d_name)
@@ -846,8 +831,8 @@ def run_code():
             info3 = tarfile.TarInfo(name="test_data.txt")
             info3.size = len(t_data)
             t.addfile(info3, io.BytesIO(t_data))
-        elif pid != "":
-            p_path = os.path.join(PROBLEMS_DIR, pid)
+        elif problem_id != "":
+            p_path = os.path.join(PROBLEMS_DIR, problem_id)
             print(f"Loading problem files from: {p_path}")
              
             if lang == "python":
@@ -908,15 +893,14 @@ def run_code():
                 pass
             worker.join()
             con.remove(force=True)
-            return jsonify({
+            return {
                 "status": "TLE", 
                 "output": "Time Limit Exceeded", 
                 "exit_code": 124
-            })
+            }
             
         con.remove(force=True)
         
-        # Save submission
         execution_output = res["msg"].decode('utf-8') if res["msg"] else ""
         
         # Determine Pass/Fail based on test output
@@ -926,31 +910,86 @@ def run_code():
             exec_status = "Fail"
         else:
             exec_status = "Pass"
-        
-        if user_id: 
-            try:
-                conn = get_db_connection()
-                if conn:
-                    cur = conn.cursor()
-                    execute_query(cur, 
-                        "INSERT INTO submissions (user_id, language, code, problem_id, status, output) VALUES (%s, %s, %s, %s, %s, %s)",
-                        (user_id, lang, user_code, pid, exec_status, execution_output)
-                    )
-                    conn.commit()
-                    conn.close()
-                    print("Submission saved to DB")
-            except Exception as e:
-                print("Failed to save submission:", e)
-        
-        return jsonify({
+            
+        return {
             "status": exec_status,
             "output": execution_output,
             "exit_code": res["code"]
-        })
+        }
 
     except Exception as e:
-        print("Error:", e)
-        return jsonify({"error": str(e)})
+        print("Docker Error:", e)
+        return {"error": str(e)}
+
+@app.route("/api/v1/execute", methods=["POST"])
+def run_code():
+    data = request.json
+    lang = data["language"]
+    user_code = data["code"]
+    pid = data.get("problem_id", "")
+    user_id = data.get("user_id")
+    
+    # Optional ad-hoc driver/test data
+    adhoc_driver = data.get("driver_code")
+    adhoc_test_data = data.get("test_data")
+    
+    print(f"Execution request: Lang={lang}, Problem={pid}, User={user_id}")
+
+    result = execute_code_in_docker(lang, user_code, pid, user_id, adhoc_driver, adhoc_test_data)
+    
+    if "error" in result:
+        return jsonify(result), 500 if "error" in result else 200
+        
+    return jsonify(result)
+
+@app.route("/api/v1/submit", methods=["POST"])
+def submit_code():
+    data = request.json
+    user_id = data.get("user_id")
+    problem_id = data.get("problem_id")
+    language = data.get("language")
+    code = data.get("code")
+    
+    print(f"Submission: User={user_id}, Problem={problem_id}")
+    
+    if not all([user_id, problem_id, language, code]):
+        return jsonify({"error": "Missing required fields"}), 400
+    
+    # 1. Execute the code to get status
+    print("Verifying submission...")
+    result = execute_code_in_docker(language, code, problem_id, user_id)
+    
+    if "error" in result:
+         return jsonify(result), 500
+
+    status = result["status"]
+    output = result["output"]
+    
+    # 2. Save with actual status
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, 
+            "INSERT INTO submissions (user_id, problem_id, language, code, status, output) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (user_id, problem_id, language, code, status, output)
+        )
+        sub_id = cur.fetchone()[0]
+        conn.commit()
+        print(f"Submission saved with ID: {sub_id}, Status: {status}")
+        
+        # Return the execution result so frontend can show it
+        return jsonify({
+            "message": "Submitted successfully", 
+            "submission_id": sub_id,
+            "status": status,
+            "output": output,
+            "exit_code": result.get("exit_code")
+        }), 201
+    except Exception as e:
+        print(f"Submit error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
 
 print("Server starting on 9000...")
 app.run(host="0.0.0.0", port=9000)

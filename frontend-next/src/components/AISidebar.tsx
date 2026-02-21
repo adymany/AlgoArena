@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { getApiBase } from "@/lib/api";
+import { getApiBase, fetchJSON } from "@/lib/api";
 
 interface Message {
   role: "user" | "assistant";
@@ -42,8 +42,7 @@ export default function AISidebar({
     if (!problemId) return;
 
     setIsHistoryLoading(true);
-    fetch(`${getApiBase()}/api/v1/chat/${problemId}?user_id=${userId}`)
-      .then((res) => res.json())
+    fetchJSON<Message[]>(`${getApiBase()}/api/v1/chat/${problemId}?user_id=${userId}`)
       .then((data) => {
         if (Array.isArray(data) && data.length > 0) {
           setMessages(data);
@@ -59,7 +58,6 @@ export default function AISidebar({
           ]);
         }
       })
-      .catch((err) => console.error("Failed to load chat", err))
       .finally(() => setIsHistoryLoading(false));
   }, [userId, problemId]);
 
