@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { getApiBase, fetchJSON } from "@/lib/api";
+import { getApiBase, fetchJSON, authHeaders } from "@/lib/api";
 
 interface Message {
   role: "user" | "assistant";
@@ -42,7 +42,7 @@ export default function AISidebar({
     if (!problemId) return;
 
     setIsHistoryLoading(true);
-    fetchJSON<Message[]>(`${getApiBase()}/api/v1/chat/${problemId}?user_id=${userId}`)
+    fetchJSON<Message[]>(`${getApiBase()}/api/v1/chat/${problemId}`)
       .then((data) => {
         if (Array.isArray(data) && data.length > 0) {
           setMessages(data);
@@ -74,15 +74,14 @@ export default function AISidebar({
     (newHistory: Message[]) => {
       fetch(`${getApiBase()}/api/v1/chat/save`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
-          user_id: userId,
           problem_id: problemId,
           history: newHistory,
         }),
       }).catch((err) => console.error("Failed to save chat", err));
     },
-    [userId, problemId],
+    [problemId],
   );
 
   // Resize handlers

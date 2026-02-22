@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { getApiBase, fetchJSON } from "@/lib/api";
+import { getApiBase, fetchJSON, authHeaders } from "@/lib/api";
 import Navbar from "@/components/Navbar";
 import AISidebarSkeleton from "@/components/AISidebarSkeleton";
 
@@ -107,12 +107,11 @@ export default function ProblemDetailPage() {
     try {
       const res = await fetch(`${getApiBase()}/api/v1/execute`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           language: language === "python" ? "python" : "cpp",
           code,
           problem_id: slug,
-          user_id: userId,
         }),
       });
       if (!res.ok) throw new Error("Run failed");
@@ -136,9 +135,8 @@ export default function ProblemDetailPage() {
     try {
       const res = await fetch(`${getApiBase()}/api/v1/submit`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
-          user_id: userId,
           problem_id: slug,
           language: language === "python" ? "python" : "cpp",
           code,

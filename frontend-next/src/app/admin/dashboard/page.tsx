@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { getApiBase, fetchJSON } from "@/lib/api";
 import Navbar from "@/components/Navbar";
-import { IconAtom, IconTerminal, IconContainer, IconDatabase, IconRobot, IconWrench, IconLock, IconPalette, IconLightning, IconBarChart, IconGlobe } from "@/components/Icons";
+import { IconAtom, IconTerminal, IconContainer, IconDatabase, IconRobot, IconWrench, IconLock, IconPalette, IconLightning, IconBarChart, IconGlobe, IconShield } from "@/components/Icons";
 import type { ReactNode } from "react";
 
 
@@ -18,35 +18,42 @@ const THEMES = [
 
 const API_ROUTES = [
   { method: "POST", badge: "post", path: "/api/v1/register", desc: "Create new user account", auth: "No" },
-  { method: "POST", badge: "post", path: "/api/v1/login", desc: "Authenticate and receive token", auth: "No" },
-  { method: "GET", badge: "get", path: "/api/v1/problems", desc: "List all problems with filters", auth: "Yes" },
-  { method: "GET", badge: "get", path: "/api/v1/problems/:slug", desc: "Get problem details by slug", auth: "Yes" },
+  { method: "POST", badge: "post", path: "/api/v1/login", desc: "Authenticate and receive JWT token", auth: "No" },
+  { method: "POST", badge: "post", path: "/api/v1/logout", desc: "Revoke JWT token (Redis)", auth: "Yes" },
+  { method: "GET", badge: "get", path: "/api/v1/check-admin", desc: "Check admin status via JWT", auth: "Yes" },
+  { method: "GET", badge: "get", path: "/api/v1/problems", desc: "List all problems (cached 5min)", auth: "No" },
+  { method: "GET", badge: "get", path: "/api/v1/problems/:slug", desc: "Get problem details (cached 10min)", auth: "No" },
   { method: "POST", badge: "post", path: "/api/v1/execute", desc: "Run code against test cases", auth: "Yes" },
   { method: "POST", badge: "post", path: "/api/v1/submit", desc: "Submit code for judging", auth: "Yes" },
   { method: "GET", badge: "get", path: "/api/v1/submissions", desc: "Get user submission history", auth: "Yes" },
-  { method: "GET", badge: "get", path: "/api/v1/stats", desc: "Get user profile and stats", auth: "Yes" },
-  { method: "POST", badge: "post", path: "/api/v1/chat/:id", desc: "Get AI-powered hint for problem", auth: "Yes" },
+  { method: "GET", badge: "get", path: "/api/v1/stats", desc: "Get user stats (cached 2min)", auth: "Yes" },
+  { method: "GET", badge: "get", path: "/api/v1/chat/:problem_id", desc: "Load AI chat history (Redis+DB)", auth: "Yes" },
+  { method: "POST", badge: "post", path: "/api/v1/chat/save", desc: "Save AI chat conversation", auth: "Yes" },
+  { method: "GET", badge: "get", path: "/api/v1/admin/stats", desc: "Admin dashboard stats (cached 30s)", auth: "Admin" },
   { method: "POST", badge: "post", path: "/api/v1/admin/problems", desc: "Create a new problem (admin)", auth: "Admin" },
   { method: "PUT", badge: "put", path: "/api/v1/admin/problems/:slug", desc: "Update a problem (admin)", auth: "Admin" },
-  { method: "DELETE", badge: "delete", path: "/api/v1/admin/problems/:id", desc: "Delete a problem (admin)", auth: "Admin" },
+  { method: "DELETE", badge: "delete", path: "/api/v1/admin/problems/:slug", desc: "Delete a problem (admin)", auth: "Admin" },
+  { method: "POST", badge: "post", path: "/api/v1/admin/set-admin", desc: "Set user admin status", auth: "Admin" },
 ];
 
 const STACK: { icon: ReactNode; title: string; sub: string; bg: string; items: string[] }[] = [
   { icon: <IconAtom />, title: "Frontend", sub: "User Interface", bg: "rgba(99,102,241,0.15)", items: ["Next.js 16 (App Router)", "TypeScript 5", "Tailwind CSS 4", "Monaco Editor (Code)"] },
-  { icon: <IconTerminal />, title: "Backend", sub: "API Server", bg: "rgba(0,255,136,0.12)", items: ["Python 3.12 + Flask", "Flask-CORS", "psycopg2 PostgreSQL", "Gunicorn WSGI"] },
-  { icon: <IconContainer />, title: "Judge System", sub: "Code Execution", bg: "rgba(251,191,36,0.15)", items: ["Docker Containers", "Resource Limits (CPU/Mem)", "Python & C++ Drivers", "Sandboxed Execution"] },
-  { icon: <IconDatabase />, title: "Database", sub: "Data Layer", bg: "rgba(236,72,153,0.15)", items: ["PostgreSQL 16", "Users, Problems, Submissions", "Indexed Queries", "Docker Compose Setup"] },
-  { icon: <IconRobot />, title: "AI Assistant", sub: "Smart Hints", bg: "rgba(139,92,246,0.15)", items: ["Gemini API", "Context-Aware Prompting", "Hint System", "Code Review"] },
+  { icon: <IconTerminal />, title: "Backend", sub: "API Server", bg: "rgba(0,255,136,0.12)", items: ["Python 3.12 + Flask", "Flask-CORS + Flask-Limiter", "JWT Auth (PyJWT)", "Rate Limiting (Redis)"] },
+  { icon: <IconContainer />, title: "Judge System", sub: "Code Execution", bg: "rgba(251,191,36,0.15)", items: ["Docker Containers", "Resource Limits (CPU/Mem)", "Python & C++ Drivers", "Execution Tracking (Redis)"] },
+  { icon: <IconDatabase />, title: "Database", sub: "Data Layer", bg: "rgba(236,72,153,0.15)", items: ["PostgreSQL 16", "Users, Problems, Submissions", "Chat Sessions (DB+Cache)", "Docker Compose Setup"] },
+  { icon: <IconShield />, title: "Redis Cache", sub: "Performance Layer", bg: "rgba(220,38,38,0.15)", items: ["JWT Token Store", "Response Caching (TTL)", "Rate Limiting Backend", "Chat State Management"] },
+  { icon: <IconRobot />, title: "AI Assistant", sub: "Smart Hints", bg: "rgba(139,92,246,0.15)", items: ["Gemini API", "Context-Aware Prompting", "Chat History (Redis+DB)", "Code Review"] },
   { icon: <IconWrench />, title: "DevOps", sub: "Infrastructure", bg: "rgba(59,130,246,0.15)", items: ["Docker Compose", "GitHub Actions CI/CD", "Environment Variables", "Health Checks"] },
 ];
 
 const FEATURES: { icon: ReactNode; title: string; desc: string; bg: string }[] = [
+  { icon: <IconShield />, title: "JWT Authentication", desc: "Secure token-based auth with Redis-backed session management and token revocation.", bg: "rgba(220,38,38,0.15)" },
   { icon: <IconLock />, title: "Sandboxed Execution", desc: "User code runs in isolated Docker containers with strict CPU, memory, and time limits.", bg: "rgba(0,255,136,0.12)" },
   { icon: <IconPalette />, title: "5 VS Code Themes", desc: "One Dark, GitHub Light, Monokai Pro, Dracula, and Nord — persisted in localStorage.", bg: "rgba(99,102,241,0.15)" },
-  { icon: <IconLightning />, title: "Real-Time Judging", desc: "Instant feedback with test case results, runtime metrics, and memory usage stats.", bg: "rgba(251,191,36,0.15)" },
-  { icon: <IconRobot />, title: "AI-Powered Hints", desc: "Contextual AI assistance that provides hints without giving away the full solution.", bg: "rgba(236,72,153,0.15)" },
+  { icon: <IconLightning />, title: "Redis Caching", desc: "Response caching with TTL for problems (5min), stats (2min), admin stats (30s), and chat history.", bg: "rgba(251,191,36,0.15)" },
+  { icon: <IconRobot />, title: "AI-Powered Hints", desc: "Contextual AI assistance with persistent chat history stored in Redis + PostgreSQL.", bg: "rgba(236,72,153,0.15)" },
   { icon: <IconBarChart />, title: "Progress Tracking", desc: "GitHub-style contribution heatmaps, streak counters, badges, and leaderboard rankings.", bg: "rgba(139,92,246,0.15)" },
-  { icon: <IconGlobe />, title: "Multi-Language", desc: "Supports Python 3, C++ 17 with syntax-highlighted Monaco editor.", bg: "rgba(59,130,246,0.15)" },
+  { icon: <IconGlobe />, title: "Rate Limiting", desc: "Redis-backed rate limiting: login 5/min, register 3/min, execute 10/min, default 60/min.", bg: "rgba(59,130,246,0.15)" },
 ];
 
 export default function AdminDashboard() {
@@ -54,10 +61,10 @@ export default function AdminDashboard() {
   const [activeTheme, setActiveTheme] = useState("one-dark");
 
   useEffect(() => {
-    const uid = localStorage.getItem("user_id");
-    if (!uid) { router.push("/login"); return; }
-    // Verify admin status from server
-    fetchJSON<{ is_admin?: boolean }>(`${getApiBase()}/api/v1/check-admin?user_id=${uid}`)
+    const token = localStorage.getItem("token");
+    if (!token) { router.push("/login"); return; }
+    // Verify admin status from server (JWT auth)
+    fetchJSON<{ is_admin?: boolean }>(`${getApiBase()}/api/v1/check-admin`)
       .then(data => {
         if (!data?.is_admin) { router.push("/problems"); return; }
         localStorage.setItem("is_admin", "true");

@@ -82,7 +82,8 @@ export default function ProfilePage() {
   useEffect(() => {
     const uid = localStorage.getItem("user_id");
     const uname = localStorage.getItem("username");
-    if (!uid) {
+    const token = localStorage.getItem("token");
+    if (!uid || !token) {
       router.push("/login");
       return;
     }
@@ -90,8 +91,8 @@ export default function ProfilePage() {
 
     const base = getApiBase();
     Promise.all([
-      fetchJSON<Stats>(`${base}/api/v1/stats?user_id=${uid}`),
-      fetchJSON<Submission[]>(`${base}/api/v1/submissions?user_id=${uid}`),
+      fetchJSON<Stats>(`${base}/api/v1/stats`),
+      fetchJSON<Submission[]>(`${base}/api/v1/submissions`),
     ])
       .then(([s, sub]) => {
         setStats(s ?? null);

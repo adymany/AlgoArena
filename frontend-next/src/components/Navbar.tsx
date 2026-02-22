@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getApiBase, fetchJSON } from "@/lib/api";
+import { getApiBase, fetchJSON, authHeaders } from "@/lib/api";
 import { ThemeToggle } from "@/components/ThemeSelector";
 
 export default function Navbar() {
@@ -15,10 +15,10 @@ export default function Navbar() {
   useEffect(() => {
     const u = localStorage.getItem("username");
     setUsername(u);
-    // Verify admin status from server
-    const uid = localStorage.getItem("user_id");
-    if (uid) {
-      fetchJSON<{ is_admin?: boolean }>(`${getApiBase()}/api/v1/check-admin?user_id=${uid}`)
+    // Verify admin status from server (now via JWT)
+    const token = localStorage.getItem("token");
+    if (token) {
+      fetchJSON<{ is_admin?: boolean }>(`${getApiBase()}/api/v1/check-admin`)
         .then(data => {
           if (data?.is_admin) {
             setIsAdmin(true);
@@ -29,9 +29,18 @@ export default function Navbar() {
   }, []);
 
   const handleLogout = () => {
+    // Call backend to revoke token in Redis
+    const token = localStorage.getItem("token");
+    if (token) {
+      fetch(`${getApiBase()}/api/v1/logout`, {
+        method: "POST",
+        headers: authHeaders(),
+      }).catch(() => {});
+    }
     localStorage.removeItem("user_id");
     localStorage.removeItem("username");
     localStorage.removeItem("is_admin");
+    localStorage.removeItem("token");
     router.push("/login");
   };
 

@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, g
 from flask_cors import CORS
 import docker
 import tarfile
@@ -9,8 +9,15 @@ import psycopg2
 import time
 import json
 import shutil
+import datetime as dt
+from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
+import redis
+import jwt as pyjwt
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from rq import Queue
 
 # Load environment variables
 load_dotenv()
@@ -20,9 +27,153 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROBLEMS_DIR = os.path.join(BASE_DIR, "problems")
 
 app = Flask(__name__)
+CORS(app) 
+
+client = docker.from_env()
+
+# --- JWT Config ---
+JWT_SECRET = os.getenv("JWT_SECRET", "algoarena-super-secret-key-change-me")
+JWT_EXPIRY_HOURS = int(os.getenv("JWT_EXPIRY_HOURS", "24"))
+
+# --- Redis Connection ---
+redis_client = redis.Redis(
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", "6379")),
+    db=0,
+    decode_responses=True
+)
+
+# Test Redis connection at startup
+try:
+    redis_client.ping()
+    print("Redis connected successfully.")
+except redis.ConnectionError:
+    print("WARNING: Redis connection failed. Caching/rate-limiting will be unavailable.")
+
+# --- RQ Task Queue ---
+task_queue = Queue(connection=redis.Redis(
+    host=os.getenv("REDIS_HOST", "localhost"),
+    port=int(os.getenv("REDIS_PORT", "6379")),
+    db=1
+))
+
+# --- Rate Limiter ---
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    storage_uri=f"redis://{os.getenv('REDIS_HOST', 'localhost')}:{os.getenv('REDIS_PORT', '6379')}/2",
+    default_limits=["60/minute"]
+)
+
+# Database Connection
+def get_db_connection():
+    try:
+        conn = psycopg2.connect(
+            host=os.getenv("DB_HOST", "localhost"),
+            database=os.getenv("DB_NAME", "contest_db"),
+            user=os.getenv("DB_USER", "user"),
+            password=os.getenv("DB_PASSWORD", "password"),
+            port=os.getenv("DB_PORT", "5433")
+        )
+        return conn
+    except Exception as e:
+        print("Database connection failed:", e)
+        return None
+
+# Helper to log and execute queries
+def execute_query(cur, query, params=None):
+    if params:
+        print(f"\n[SQL QUERY]: {query} | Params: {params}")
+        cur.execute(query, params)
+    else:
+        print(f"\n[SQL QUERY]: {query}")
+        cur.execute(query)
+
+# --- JWT Helpers ---
+def generate_token(user_id, username, is_admin=False):
+    """Generate a JWT token and store it in Redis for validation."""
+    payload = {
+        "user_id": user_id,
+        "username": username,
+        "is_admin": is_admin,
+        "exp": dt.datetime.utcnow() + dt.timedelta(hours=JWT_EXPIRY_HOURS),
+        "iat": dt.datetime.utcnow()
+    }
+    token = pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    # Store in Redis with TTL for server-side validation & revocation
+    redis_client.setex(f"token:{user_id}", JWT_EXPIRY_HOURS * 3600, token)
+    return token
+
+def decode_token(token):
+    """Decode and validate a JWT token."""
+    try:
+        payload = pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        user_id = payload["user_id"]
+        # Check if token is still valid in Redis (not revoked)
+        stored = redis_client.get(f"token:{user_id}")
+        if stored != token:
+            return None
+        return payload
+    except pyjwt.ExpiredSignatureError:
+        return None
+    except pyjwt.InvalidTokenError:
+        return None
+
+def require_auth(f):
+    """Decorator: requires a valid JWT Bearer token."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return jsonify({"error": "Authentication required"}), 401
+        token = auth_header.split(" ", 1)[1]
+        payload = decode_token(token)
+        if not payload:
+            return jsonify({"error": "Invalid or expired token"}), 401
+        g.user_id = payload["user_id"]
+        g.username = payload["username"]
+        g.is_admin = payload.get("is_admin", False)
+        return f(*args, **kwargs)
+    return decorated
+
+def require_admin(f):
+    """Decorator: requires a valid JWT token AND admin privileges."""
+    @wraps(f)
+    @require_auth
+    def decorated(*args, **kwargs):
+        if not g.is_admin:
+            return jsonify({"error": "Admin access required"}), 403
+        return f(*args, **kwargs)
+    return decorated
+
+# --- Cache Helpers ---
+def cache_get(key):
+    """Get a cached value from Redis."""
+    val = redis_client.get(key)
+    if val:
+        return json.loads(val)
+    return None
+
+def cache_set(key, value, ttl=300):
+    """Set a cached value in Redis with TTL (seconds)."""
+    redis_client.setex(key, ttl, json.dumps(value))
+
+def cache_delete_pattern(pattern):
+    """Delete all keys matching a pattern."""
+    for key in redis_client.scan_iter(match=pattern):
+        redis_client.delete(key)
+
+# --- Routes ---
 
 @app.route("/api/v1/problems/<slug>", methods=["GET"])
 def get_problem(slug):
+    # Cache individual problem for 10 minutes
+    cache_key = f"problem:{slug}"
+    cached = cache_get(cache_key)
+    if cached:
+        print(f"Returning cached problem: {slug}")
+        return jsonify(cached)
+
     print(f"Fetching problem details: {slug}")
     conn = get_db_connection()
     try:
@@ -48,7 +199,7 @@ def get_problem(slug):
                 with open(os.path.join(problem_dir, "test_data.txt"), "r", encoding="utf-8") as f:
                     test_data = f.read()
 
-            return jsonify({
+            result = {
                 "slug": row[0], 
                 "title": row[1], 
                 "description": row[2], 
@@ -57,7 +208,9 @@ def get_problem(slug):
                 "driver_python": driver_python,
                 "driver_cpp": driver_cpp,
                 "test_data": test_data
-            })
+            }
+            cache_set(cache_key, result, ttl=600)
+            return jsonify(result)
         return jsonify({"error": "Problem not found"}), 404
     finally:
         conn.close()
@@ -65,7 +218,13 @@ def get_problem(slug):
 # --- Admin Endpoints ---
 
 @app.route("/api/v1/admin/stats", methods=["GET"])
+@require_admin
 def admin_stats():
+    # Cache admin stats for 30 seconds
+    cached = cache_get("admin:stats")
+    if cached:
+        return jsonify(cached)
+    
     from datetime import datetime, timedelta
     conn = get_db_connection()
     try:
@@ -170,7 +329,7 @@ def admin_stats():
                 "last_active": row[5].isoformat() if row[5] else None
             })
 
-        return jsonify({
+        result = {
             "users": {"total": total_users, "new_today": new_today, "active_today": active_today},
             "submissions": {"total": total_submissions, "today": submissions_today, "pass_count": pass_count, "fail_count": fail_count},
             "acceptance_rate": acceptance_rate,
@@ -179,11 +338,14 @@ def admin_stats():
             "language_distribution": language_distribution,
             "top_problems": top_problems,
             "recent_users": recent_users
-        })
+        }
+        cache_set("admin:stats", result, ttl=30)
+        return jsonify(result)
     finally:
         conn.close()
 
 @app.route("/api/v1/admin/problems", methods=["POST"])
+@require_admin
 def create_problem():
     data = request.json
     slug = data.get("slug")
@@ -234,9 +396,13 @@ def create_problem():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     finally:
+        cache_delete_pattern("problems:*")
+        cache_delete_pattern("problem:*")
+        redis_client.delete("admin:stats")
         conn.close()
 
 @app.route("/api/v1/admin/problems/<slug>", methods=["PUT"])
+@require_admin
 def update_problem(slug):
     data = request.json
     title = data.get("title")
@@ -284,9 +450,13 @@ def update_problem(slug):
         print(f"Update error: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
+        cache_delete_pattern("problems:*")
+        redis_client.delete(f"problem:{slug}")
+        redis_client.delete("admin:stats")
         conn.close()
 
 @app.route("/api/v1/admin/problems/<slug>", methods=["DELETE"])
+@require_admin
 def delete_problem(slug):
     print(f"Deleting problem: {slug}")
     conn = get_db_connection()
@@ -318,35 +488,10 @@ def delete_problem(slug):
         print(f"Delete error: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
+        cache_delete_pattern("problems:*")
+        redis_client.delete(f"problem:{slug}")
+        redis_client.delete("admin:stats")
         conn.close()
-CORS(app) 
-
-client = docker.from_env()
-
-# Database Connection
-def get_db_connection():
-    try:
-        conn = psycopg2.connect(
-            host=os.getenv("DB_HOST", "localhost"),
-            database=os.getenv("DB_NAME", "contest_db"),
-            user=os.getenv("DB_USER", "user"),
-            password=os.getenv("DB_PASSWORD", "password"),
-            port=os.getenv("DB_PORT", "5433")
-        )
-        return conn
-    except Exception as e:
-        print("Database connection failed:", e)
-        return None
-
-# Helper to log and execute queries
-def execute_query(cur, query, params=None):
-    if params:
-        print(f"\n[SQL QUERY]: {query} | Params: {params}")
-        cur.execute(query, params)
-    else:
-        print(f"\n[SQL QUERY]: {query}")
-        cur.execute(query)
-
 # Initialize Database
 def init_db():
     retries = 5
@@ -536,20 +681,19 @@ init_db()
 
 # --- Auth Endpoints ---
 @app.route("/api/v1/check-admin", methods=["GET"])
+@require_auth
 def check_admin():
-    user_id = request.args.get("user_id")
-    if not user_id:
-        return jsonify({"is_admin": False}), 200
-    conn = get_db_connection()
-    try:
-        cur = conn.cursor()
-        execute_query(cur, "SELECT COALESCE(is_admin, FALSE) FROM users WHERE id = %s", (user_id,))
-        row = cur.fetchone()
-        return jsonify({"is_admin": bool(row[0]) if row else False}), 200
-    finally:
-        conn.close()
+    return jsonify({"is_admin": g.is_admin}), 200
+
+@app.route("/api/v1/logout", methods=["POST"])
+@require_auth
+def logout():
+    """Revoke the current token by removing it from Redis."""
+    redis_client.delete(f"token:{g.user_id}")
+    return jsonify({"message": "Logged out successfully"}), 200
 
 @app.route("/api/v1/admin/set-admin", methods=["POST"])
+@require_admin
 def set_admin():
     data = request.json
     target_username = data.get("username")
@@ -568,6 +712,7 @@ def set_admin():
         conn.close()
 
 @app.route("/api/v1/register", methods=["POST"])
+@limiter.limit("3/minute")
 def register():
     data = request.json
     username = data.get("username")
@@ -585,7 +730,8 @@ def register():
         user_id = cur.fetchone()[0]
         conn.commit()
         print(f"User created: {username} (ID: {user_id})")
-        return jsonify({"message": "User created", "user_id": user_id}), 201
+        token = generate_token(user_id, username, False)
+        return jsonify({"message": "User created", "user_id": user_id, "token": token, "username": username, "is_admin": False}), 201
     except psycopg2.errors.UniqueViolation:
         conn.rollback()
         print(f"Registration failed: Username {username} exists")
@@ -597,6 +743,7 @@ def register():
         conn.close()
 
 @app.route("/api/v1/login", methods=["POST"])
+@limiter.limit("5/minute")
 def login():
     data = request.json
     username = data.get("username")
@@ -611,7 +758,14 @@ def login():
         
         if user and check_password_hash(user[1], password):
             print(f"Login success: {username}")
-            return jsonify({"message": "Login successful", "user_id": user[0], "username": username, "is_admin": bool(user[2])}), 200
+            token = generate_token(user[0], username, bool(user[2]))
+            return jsonify({
+                "message": "Login successful",
+                "user_id": user[0],
+                "username": username,
+                "is_admin": bool(user[2]),
+                "token": token
+            }), 200
         else:
             print(f"Login failed: {username}")
             return jsonify({"error": "Invalid credentials"}), 401
@@ -621,12 +775,19 @@ def login():
 # --- Problems Endpoints ---
 @app.route("/api/v1/problems", methods=["GET"])
 def get_problems():
+    # Cache problems list for 5 minutes
+    cached = cache_get("problems:list")
+    if cached:
+        print("Returning cached problems list")
+        return jsonify(cached)
+    
     print("Fetching problem list...")
     conn = get_db_connection()
     try:
         cur = conn.cursor()
         execute_query(cur, "SELECT slug, title, difficulty FROM problems ORDER BY id ASC")
         problems = [{"slug": row[0], "title": row[1], "difficulty": row[2]} for row in cur.fetchall()]
+        cache_set("problems:list", problems, ttl=300)
         return jsonify(problems)
     finally:
         conn.close()
@@ -634,10 +795,15 @@ def get_problems():
 
 # --- Stats Endpoint ---
 @app.route("/api/v1/stats", methods=["GET"])
+@require_auth
 def get_stats():
-    user_id = request.args.get("user_id")
-    if not user_id:
-        return jsonify({"error": "user_id required"}), 400
+    user_id = g.user_id
+    
+    # Cache user stats for 2 minutes
+    cache_key = f"stats:user:{user_id}"
+    cached = cache_get(cache_key)
+    if cached:
+        return jsonify(cached)
 
     conn = get_db_connection()
     try:
@@ -730,7 +896,7 @@ def get_stats():
         # Active days count
         active_days = sum(1 for v in activity_map.values() if v > 0)
 
-        return jsonify({
+        result = {
             "total_problems": total_problems,
             "solved": solved_count,
             "attempted": attempted_count,
@@ -741,18 +907,18 @@ def get_stats():
             "current_streak": current_streak,
             "longest_streak": longest_streak,
             "active_days": active_days
-        })
+        }
+        cache_set(cache_key, result, ttl=120)
+        return jsonify(result)
     finally:
         conn.close()
 
 # --- Submissions Endpoints ---
 @app.route("/api/v1/submissions", methods=["GET"])
+@require_auth
 def get_submissions():
-    user_id = request.args.get("user_id")
+    user_id = g.user_id
     print(f"Fetching submissions for user: {user_id}")
-    
-    if not user_id:
-        return jsonify({"error": "user_id required"}), 400
     
     conn = get_db_connection()
     try:
@@ -779,6 +945,10 @@ def get_submissions():
 
 # Helper: Execute code in Docker
 def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=None, adhoc_test_data=None):
+    # Track execution in Redis for monitoring
+    redis_client.incr("exec:active")
+    redis_client.incr("exec:total")
+    start_time = time.time()
     fname = "solution.py"
     cmd = ""
 
@@ -893,6 +1063,7 @@ def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=No
                 pass
             worker.join()
             con.remove(force=True)
+            redis_client.decr("exec:active")
             return {
                 "status": "TLE", 
                 "output": "Time Limit Exceeded", 
@@ -911,6 +1082,12 @@ def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=No
         else:
             exec_status = "Pass"
             
+        redis_client.decr("exec:active")
+        elapsed = time.time() - start_time
+        # Track average execution time in Redis
+        redis_client.lpush("exec:times", round(elapsed, 3))
+        redis_client.ltrim("exec:times", 0, 99)  # Keep last 100
+        
         return {
             "status": exec_status,
             "output": execution_output,
@@ -919,15 +1096,18 @@ def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=No
 
     except Exception as e:
         print("Docker Error:", e)
+        redis_client.decr("exec:active")
         return {"error": str(e)}
 
 @app.route("/api/v1/execute", methods=["POST"])
+@require_auth
+@limiter.limit("10/minute")
 def run_code():
     data = request.json
     lang = data["language"]
     user_code = data["code"]
     pid = data.get("problem_id", "")
-    user_id = data.get("user_id")
+    user_id = g.user_id
     
     # Optional ad-hoc driver/test data
     adhoc_driver = data.get("driver_code")
@@ -943,16 +1123,18 @@ def run_code():
     return jsonify(result)
 
 @app.route("/api/v1/submit", methods=["POST"])
+@require_auth
+@limiter.limit("5/minute")
 def submit_code():
     data = request.json
-    user_id = data.get("user_id")
+    user_id = g.user_id
     problem_id = data.get("problem_id")
     language = data.get("language")
     code = data.get("code")
     
     print(f"Submission: User={user_id}, Problem={problem_id}")
     
-    if not all([user_id, problem_id, language, code]):
+    if not all([problem_id, language, code]):
         return jsonify({"error": "Missing required fields"}), 400
     
     # 1. Execute the code to get status
@@ -977,6 +1159,10 @@ def submit_code():
         conn.commit()
         print(f"Submission saved with ID: {sub_id}, Status: {status}")
         
+        # Invalidate user stats and admin stats caches
+        redis_client.delete(f"stats:user:{user_id}")
+        redis_client.delete("admin:stats")
+        
         # Return the execution result so frontend can show it
         return jsonify({
             "message": "Submitted successfully", 
@@ -987,6 +1173,71 @@ def submit_code():
         }), 201
     except Exception as e:
         print(f"Submit error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+# --- Chat Endpoints ---
+@app.route("/api/v1/chat/<problem_id>", methods=["GET"])
+@require_auth
+@limiter.limit("20/minute")
+def get_chat_history(problem_id):
+    """Load chat history for a user+problem. Uses Redis cache with DB fallback."""
+    user_id = g.user_id
+    cache_key = f"chat:{user_id}:{problem_id}"
+    
+    # Try Redis cache first
+    cached = cache_get(cache_key)
+    if cached:
+        return jsonify(cached)
+    
+    # Fallback to DB
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, 
+            "SELECT history FROM chat_sessions WHERE user_id = %s AND problem_id = %s",
+            (user_id, problem_id))
+        row = cur.fetchone()
+        if row and row[0]:
+            history = row[0] if isinstance(row[0], list) else json.loads(row[0])
+            cache_set(cache_key, history, ttl=1800)  # Cache for 30 min
+            return jsonify(history)
+        return jsonify([])
+    finally:
+        conn.close()
+
+@app.route("/api/v1/chat/save", methods=["POST"])
+@require_auth
+@limiter.limit("20/minute")
+def save_chat_history():
+    """Save chat history to Redis cache + PostgreSQL."""
+    user_id = g.user_id
+    data = request.json
+    problem_id = data.get("problem_id")
+    history = data.get("history", [])
+    
+    if not problem_id:
+        return jsonify({"error": "problem_id required"}), 400
+    
+    # Update Redis cache immediately
+    cache_key = f"chat:{user_id}:{problem_id}"
+    cache_set(cache_key, history, ttl=1800)
+    
+    # Persist to DB (upsert)
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, """
+            INSERT INTO chat_sessions (user_id, problem_id, history, updated_at)
+            VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (user_id, problem_id) 
+            DO UPDATE SET history = %s, updated_at = CURRENT_TIMESTAMP
+        """, (user_id, problem_id, json.dumps(history), json.dumps(history)))
+        conn.commit()
+        return jsonify({"message": "Chat saved"}), 200
+    except Exception as e:
+        print(f"Chat save error: {e}")
         return jsonify({"error": str(e)}), 500
     finally:
         conn.close()

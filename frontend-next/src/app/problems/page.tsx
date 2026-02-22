@@ -89,19 +89,20 @@ export default function ProblemsPage() {
 
   useEffect(() => {
     const uid = localStorage.getItem("user_id");
-    if (!uid) { router.push("/login"); return; }
+    const token = localStorage.getItem("token");
+    if (!uid || !token) { router.push("/login"); return; }
     setUserId(uid);
 
     // Check if tutorial was seen
     const seen = localStorage.getItem("algoarena-tutorial-seen");
     if (!seen) setShowWelcome(true);
 
-    // Fetch data
+    // Fetch data (JWT auth via fetchJSON headers)
     const base = getApiBase();
     Promise.all([
       fetchJSON<Problem[]>(`${base}/api/v1/problems`),
-      fetchJSON<Stats>(`${base}/api/v1/stats?user_id=${uid}`),
-      fetchJSON<Submission[]>(`${base}/api/v1/submissions?user_id=${uid}`),
+      fetchJSON<Stats>(`${base}/api/v1/stats`),
+      fetchJSON<Submission[]>(`${base}/api/v1/submissions`),
     ])
       .then(([p, s, sub]) => {
         setProblems(Array.isArray(p) ? p : []);

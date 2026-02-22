@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getApiBase, fetchJSON } from "@/lib/api";
+import { getApiBase, fetchJSON, authHeaders } from "@/lib/api";
 import Navbar from "@/components/Navbar";
 
 import { showToast } from "@/components/Toast";
@@ -63,10 +63,10 @@ export default function AdminPage() {
   const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
-    const uid = localStorage.getItem("user_id");
-    if (!uid) { router.push("/login"); return; }
-    // Verify admin status from server
-    fetchJSON<{ is_admin?: boolean }>(`${getApiBase()}/api/v1/check-admin?user_id=${uid}`)
+    const token = localStorage.getItem("token");
+    if (!token) { router.push("/login"); return; }
+    // Verify admin status from server (JWT auth)
+    fetchJSON<{ is_admin?: boolean }>(`${getApiBase()}/api/v1/check-admin`)
       .then(data => {
         if (!data?.is_admin) { router.push("/problems"); return; }
         localStorage.setItem("is_admin", "true");
@@ -134,7 +134,7 @@ export default function AdminPage() {
     if (!confirm(`Delete "${formData.title}"?`)) return;
     setLoading(true);
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/admin/problems/${formData.slug}`, { method: "DELETE" });
+      const res = await fetch(`${getApiBase()}/api/v1/admin/problems/${formData.slug}`, { method: "DELETE", headers: authHeaders() });
       if (res.ok) {
         showToast("Problem deleted", "success");
         fetchProblems(); resetForm(); setShowModal(false);
@@ -154,7 +154,7 @@ export default function AdminPage() {
     try {
       const res = await fetch(url, {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify(formData),
       });
       const data = await res.json();
@@ -319,12 +319,11 @@ CRITICAL RULES:
     try {
       const res = await fetch(`${getApiBase()}/api/v1/execute`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({
           language: "python",
           code: formData.python_template,
           problem_id: formData.slug || "__test__",
-          user_id: 0,
           driver_code: formData.driver_python,
           test_data: formData.test_data,
         }),

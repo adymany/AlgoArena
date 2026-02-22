@@ -67,6 +67,7 @@ export default function LoginPage() {
       localStorage.setItem("user_id", String(data.user_id));
       localStorage.setItem("username", data.username);
       localStorage.setItem("is_admin", data.is_admin ? "true" : "false");
+      localStorage.setItem("token", data.token);
       router.push("/problems");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -92,9 +93,12 @@ export default function LoginPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Registration failed");
-      setSuccess("Account created! You can now sign in.");
-      setActiveTab("login");
-      setLoginUser(regUser);
+      // Auto-login on successful registration
+      localStorage.setItem("user_id", String(data.user_id));
+      localStorage.setItem("username", data.username);
+      localStorage.setItem("is_admin", data.is_admin ? "true" : "false");
+      localStorage.setItem("token", data.token);
+      router.push("/problems");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Registration failed");
     } finally {
