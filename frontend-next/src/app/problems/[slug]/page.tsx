@@ -7,7 +7,9 @@ import { getApiBase, fetchJSON, authHeaders } from "@/lib/api";
 import Navbar from "@/components/Navbar";
 import AISidebarSkeleton from "@/components/AISidebarSkeleton";
 
-const CodeEditor = dynamic(() => import("@/components/CodeEditor"), { ssr: false });
+const CodeEditor = dynamic(() => import("@/components/CodeEditor"), {
+  ssr: false,
+});
 const AISidebar = dynamic(() => import("@/components/AISidebar"), {
   ssr: false,
   loading: () => <AISidebarSkeleton />,
@@ -40,11 +42,15 @@ export default function ProblemDetailPage() {
   const [userId, setUserId] = useState<number | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [activeBottomTab, setActiveBottomTab] = useState<"testcases" | "output">("testcases");
+  const [activeBottomTab, setActiveBottomTab] = useState<
+    "testcases" | "output"
+  >("testcases");
   const [testCases, setTestCases] = useState<TestCase[]>([]);
   const [rawOutput, setRawOutput] = useState("");
   const [bottomHeight, setBottomHeight] = useState(200);
-  const [activePanelTab, setActivePanelTab] = useState<"description" | "editorial">("description");
+  const [activePanelTab, setActivePanelTab] = useState<
+    "description" | "editorial"
+  >("description");
 
   const isResizing = useRef(false);
   const startY = useRef(0);
@@ -52,7 +58,10 @@ export default function ProblemDetailPage() {
 
   useEffect(() => {
     const uid = localStorage.getItem("user_id");
-    if (!uid) { router.push("/login"); return; }
+    if (!uid) {
+      router.push("/login");
+      return;
+    }
     setUserId(Number(uid));
 
     fetchJSON<ProblemData>(`${getApiBase()}/api/v1/problems/${slug}`)
@@ -71,7 +80,10 @@ export default function ProblemDetailPage() {
     const lang = language === "python" ? "python" : "cpp";
     const savedKey = `code_${slug}_${lang}`;
     const saved = localStorage.getItem(savedKey);
-    if (saved) { setCode(saved); return; }
+    if (saved) {
+      setCode(saved);
+      return;
+    }
     setCode(problem.templates[lang] || "");
   }, [language, problem, slug]);
 
@@ -80,6 +92,40 @@ export default function ProblemDetailPage() {
     const lang = language === "python" ? "python" : "cpp";
     localStorage.setItem(`code_${slug}_${lang}`, code);
   }, [code, slug, language]);
+
+  // Pre-populate test cases from problem description examples if available
+  useEffect(() => {
+    if (
+      problem?.description &&
+      testCases.length === 0 &&
+      !rawOutput &&
+      !isRunning &&
+      !isSubmitting
+    ) {
+      const inputRegex =
+        /<span class="example-label">Input:<\/span>\s*(.*?)<\/p>/g;
+      const outputRegex =
+        /<span class="example-label">Output:<\/span>\s*(.*?)<\/p>/g;
+
+      const inputs = [...problem.description.matchAll(inputRegex)].map((m) =>
+        m[1].replace(/<\/?[^>]+(>|$)/g, "").trim(),
+      );
+      const outputs = [...problem.description.matchAll(outputRegex)].map((m) =>
+        m[1].replace(/<\/?[^>]+(>|$)/g, "").trim(),
+      );
+
+      if (inputs.length > 0 && inputs.length === outputs.length) {
+        const defaultCases: TestCase[] = inputs.map((inp, idx) => ({
+          id: String(idx + 1),
+          passed: false,
+          input: inp,
+          output: "",
+          expected: outputs[idx],
+        }));
+        setTestCases(defaultCases);
+      }
+    }
+  }, [problem, isRunning, isSubmitting, rawOutput]);
 
   const parseTestCases = (raw: string): TestCase[] => {
     const cases: TestCase[] = [];
@@ -114,14 +160,20 @@ export default function ProblemDetailPage() {
           problem_id: slug,
         }),
       });
-      if (!res.ok) throw new Error("Run failed");
+      if (!res.ok) {
+        if (res.status === 401)
+          throw new Error("Session expired. Please log in again.");
+        if (res.status === 429)
+          throw new Error("Too many requests. Please slow down.");
+        throw new Error("Server or Docker error occurred. Try again.");
+      }
       const data = await res.json();
       const output = data.output || data.error || "";
       setRawOutput(output);
       const cases = parseTestCases(output);
       if (cases.length > 0) setTestCases(cases);
-    } catch {
-      setRawOutput("Error running code. Check your connection.");
+    } catch (err: any) {
+      setRawOutput(err.message || "Error running code. Check your connection.");
     } finally {
       setIsRunning(false);
     }
@@ -142,39 +194,53 @@ export default function ProblemDetailPage() {
           code,
         }),
       });
-      if (!res.ok) throw new Error("Submit failed");
+      if (!res.ok) {
+        if (res.status === 401)
+          throw new Error("Session expired. Please log in again.");
+        if (res.status === 429)
+          throw new Error("Too many requests. Please slow down.");
+        throw new Error("Server or Docker error occurred. Try again.");
+      }
       const data = await res.json();
       const output = data.output || data.error || "";
       setRawOutput(output);
       const cases = parseTestCases(output);
       if (cases.length > 0) setTestCases(cases);
-    } catch {
-      setRawOutput("Error submitting code. Check your connection.");
+    } catch (err: any) {
+      setRawOutput(
+        err.message || "Error submitting code. Check your connection.",
+      );
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
-    isResizing.current = true;
-    startY.current = e.clientY;
-    startH.current = bottomHeight;
-    e.preventDefault();
-  }, [bottomHeight]);
+  const onResizeMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      isResizing.current = true;
+      startY.current = e.clientY;
+      startH.current = bottomHeight;
+      e.preventDefault();
+    },
+    [bottomHeight],
+  );
 
   // Horizontal panel resizing
-  const [leftWidth, setLeftWidth] = useState(35);
+  const [leftWidth, setLeftWidth] = useState(25);
   const [rightWidth, setRightWidth] = useState(25);
   const hResizing = useRef<"left" | "right" | null>(null);
   const hStartX = useRef(0);
   const hStartW = useRef(0);
 
-  const onHResizeMouseDown = useCallback((side: "left" | "right") => (e: React.MouseEvent) => {
-    hResizing.current = side;
-    hStartX.current = e.clientX;
-    hStartW.current = side === "left" ? leftWidth : rightWidth;
-    e.preventDefault();
-  }, [leftWidth, rightWidth]);
+  const onHResizeMouseDown = useCallback(
+    (side: "left" | "right") => (e: React.MouseEvent) => {
+      hResizing.current = side;
+      hStartX.current = e.clientX;
+      hStartW.current = side === "left" ? leftWidth : rightWidth;
+      e.preventDefault();
+    },
+    [leftWidth, rightWidth],
+  );
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -184,9 +250,13 @@ export default function ProblemDetailPage() {
         const dx = e.clientX - hStartX.current;
 
         if (hResizing.current === "left") {
-          setLeftWidth(Math.max(15, Math.min(55, hStartW.current + dx * pctPerPx)));
+          setLeftWidth(
+            Math.max(15, Math.min(55, hStartW.current + dx * pctPerPx)),
+          );
         } else {
-          setRightWidth(Math.max(15, Math.min(45, hStartW.current - dx * pctPerPx)));
+          setRightWidth(
+            Math.max(15, Math.min(45, hStartW.current - dx * pctPerPx)),
+          );
         }
       }
       if (isResizing.current) {
@@ -208,9 +278,23 @@ export default function ProblemDetailPage() {
 
   const diffBadge = (d: string) => {
     const dl = d?.toLowerCase();
-    if (dl === "easy") return <span className="diff-badge diff-easy" style={{ fontSize: 11 }}>Easy</span>;
-    if (dl === "medium") return <span className="diff-badge diff-medium" style={{ fontSize: 11 }}>Medium</span>;
-    return <span className="diff-badge diff-hard" style={{ fontSize: 11 }}>Hard</span>;
+    if (dl === "easy")
+      return (
+        <span className="diff-badge diff-easy" style={{ fontSize: 11 }}>
+          Easy
+        </span>
+      );
+    if (dl === "medium")
+      return (
+        <span className="diff-badge diff-medium" style={{ fontSize: 11 }}>
+          Medium
+        </span>
+      );
+    return (
+      <span className="diff-badge diff-hard" style={{ fontSize: 11 }}>
+        Hard
+      </span>
+    );
   };
 
   const renderDescription = () => {
@@ -233,12 +317,24 @@ export default function ProblemDetailPage() {
         </div>
         <div className="ide-nav-spacer" />
         <div className="ide-nav-actions">
-          <button className="run-btn" onClick={handleRun} disabled={isRunning || !problem}>
-            <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+          <button
+            className="run-btn"
+            onClick={handleRun}
+            disabled={isRunning || !problem}
+          >
+            <svg viewBox="0 0 24 24">
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
             {isRunning ? "Running..." : "Run"}
           </button>
-          <button className="submit-code-btn" onClick={handleSubmit} disabled={isSubmitting || !problem}>
-            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+          <button
+            className="submit-code-btn"
+            onClick={handleSubmit}
+            disabled={isSubmitting || !problem}
+          >
+            <svg viewBox="0 0 24 24">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
             {isSubmitting ? "Submitting..." : "Submit"}
           </button>
         </div>
@@ -274,14 +370,22 @@ export default function ProblemDetailPage() {
                 {renderDescription()}
               </>
             ) : (
-              <div style={{ color: "var(--text-muted)", padding: 24 }}>Loading problem...</div>
+              <div style={{ color: "var(--text-muted)", padding: 24 }}>
+                Loading problem...
+              </div>
             )}
           </div>
         </div>
 
-        <div className="resize-handle-h" onMouseDown={onHResizeMouseDown("left")} />
+        <div
+          className="resize-handle-h"
+          onMouseDown={onHResizeMouseDown("left")}
+        />
 
-        <div className="panel panel-center" style={{ width: `${100 - leftWidth - rightWidth}%` }}>
+        <div
+          className="panel panel-center"
+          style={{ width: `${100 - leftWidth - rightWidth}%` }}
+        >
           <div className="editor-toolbar">
             <select
               className="lang-select"
@@ -321,31 +425,55 @@ export default function ProblemDetailPage() {
             <div className="panel-content">
               {activeBottomTab === "testcases" ? (
                 testCases.length > 0 ? (
-                  testCases.map((tc) => (
-                    <div key={tc.id} className={`test-case-result ${tc.passed ? "pass" : "fail"}`}>
-                      <div className="test-case-header">
-                        <span className={`test-badge ${tc.passed ? "pass" : "fail"}`}>
-                          {tc.passed ? "PASS" : "FAIL"}
-                        </span>
-                        <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Case #{tc.id}</span>
+                  testCases.map((tc) => {
+                    const isDefault = tc.output === "";
+                    return (
+                      <div
+                        key={tc.id}
+                        className={`test-case-result ${isDefault ? "" : tc.passed ? "pass" : "fail"}`}
+                      >
+                        <div className="test-case-header">
+                          {!isDefault && (
+                            <span
+                              className={`test-badge ${tc.passed ? "pass" : "fail"}`}
+                            >
+                              {tc.passed ? "PASS" : "FAIL"}
+                            </span>
+                          )}
+                          <span
+                            style={{
+                              fontSize: 13,
+                              fontWeight: isDefault ? 600 : "normal",
+                              color: isDefault
+                                ? "var(--text-primary)"
+                                : "var(--text-muted)",
+                            }}
+                          >
+                            Case #{tc.id}
+                          </span>
+                        </div>
+                        <div className="test-row">
+                          <span className="test-label">Input:</span>
+                          <span className="test-value">{tc.input}</span>
+                        </div>
+                        {!isDefault && (
+                          <div className="test-row">
+                            <span className="test-label">Output:</span>
+                            <span className="test-value">{tc.output}</span>
+                          </div>
+                        )}
+                        <div className="test-row">
+                          <span className="test-label">Expected:</span>
+                          <span className="test-value">{tc.expected}</span>
+                        </div>
                       </div>
-                      <div className="test-row">
-                        <span className="test-label">Input:</span>
-                        <span className="test-value">{tc.input}</span>
-                      </div>
-                      <div className="test-row">
-                        <span className="test-label">Output:</span>
-                        <span className="test-value">{tc.output}</span>
-                      </div>
-                      <div className="test-row">
-                        <span className="test-label">Expected:</span>
-                        <span className="test-value">{tc.expected}</span>
-                      </div>
-                    </div>
-                  ))
+                    );
+                  })
                 ) : (
                   <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
-                    {isRunning || isSubmitting ? "Running..." : "Run or submit your code to see test results."}
+                    {isRunning || isSubmitting
+                      ? "Running..."
+                      : "Run or submit your code to see test results."}
                   </div>
                 )
               ) : (
@@ -357,7 +485,10 @@ export default function ProblemDetailPage() {
           </div>
         </div>
 
-        <div className="resize-handle-h" onMouseDown={onHResizeMouseDown("right")} />
+        <div
+          className="resize-handle-h"
+          onMouseDown={onHResizeMouseDown("right")}
+        />
 
         <div className="panel panel-right" style={{ width: `${rightWidth}%` }}>
           <div className="panel-header">

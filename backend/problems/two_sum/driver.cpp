@@ -2,9 +2,9 @@
 #include <vector>
 #include <string>
 #include <algorithm>
-#include "solution.cpp"
-
 using namespace std;
+
+#include "solution.cpp"
 
 int main() {
     int n, target, exp1, exp2;

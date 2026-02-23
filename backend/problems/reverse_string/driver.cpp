@@ -2,9 +2,9 @@
 #include <string>
 #include <vector>
 #include <sstream>
-#include "solution.cpp"
-
 using namespace std;
+
+#include "solution.cpp"
 
 // Parse a JSON-like char array: ["h","e","l","l","o"]
 vector<char> parseCharArray(const string& s) {

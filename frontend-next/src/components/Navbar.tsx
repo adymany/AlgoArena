@@ -11,6 +11,19 @@ export default function Navbar() {
   const router = useRouter();
   const [username, setUsername] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+
+  useEffect(() => {
+    // Close dropdown anytime the body is clicked
+    const handleBodyClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest(".nav-avatar-container")) {
+        setDropdownOpen(false);
+      }
+    };
+    document.addEventListener("click", handleBodyClick);
+    return () => document.removeEventListener("click", handleBodyClick);
+  }, []);
 
   useEffect(() => {
     const u = localStorage.getItem("username");
@@ -18,13 +31,14 @@ export default function Navbar() {
     // Verify admin status from server (now via JWT)
     const token = localStorage.getItem("token");
     if (token) {
-      fetchJSON<{ is_admin?: boolean }>(`${getApiBase()}/api/v1/check-admin`)
-        .then(data => {
-          if (data?.is_admin) {
-            setIsAdmin(true);
-            localStorage.setItem("is_admin", "true");
-          }
-        });
+      fetchJSON<{ is_admin?: boolean }>(
+        `${getApiBase()}/api/v1/check-admin`,
+      ).then((data) => {
+        if (data?.is_admin) {
+          setIsAdmin(true);
+          localStorage.setItem("is_admin", "true");
+        }
+      });
     }
   }, []);
 
@@ -54,7 +68,10 @@ export default function Navbar() {
       </Link>
 
       <div className="nav-links">
-        <Link href="/problems" className={`nav-link${pathname === "/problems" ? " active" : ""}`}>
+        <Link
+          href="/problems"
+          className={`nav-link${pathname === "/problems" ? " active" : ""}`}
+        >
           <svg viewBox="0 0 24 24">
             <rect x="3" y="3" width="7" height="7" />
             <rect x="14" y="3" width="7" height="7" />
@@ -63,7 +80,10 @@ export default function Navbar() {
           </svg>
           Problems
         </Link>
-        <Link href="/profile" className={`nav-link${pathname === "/profile" ? " active" : ""}`}>
+        <Link
+          href="/profile"
+          className={`nav-link${pathname === "/profile" ? " active" : ""}`}
+        >
           <svg viewBox="0 0 24 24">
             <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
             <circle cx="12" cy="7" r="4" />
@@ -71,7 +91,10 @@ export default function Navbar() {
           Profile
         </Link>
         {isAdmin && (
-          <Link href="/admin" className={`nav-link${pathname?.startsWith("/admin") ? " active" : ""}`}>
+          <Link
+            href="/admin"
+            className={`nav-link${pathname?.startsWith("/admin") ? " active" : ""}`}
+          >
             <svg viewBox="0 0 24 24">
               <circle cx="12" cy="12" r="3" />
               <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
@@ -84,13 +107,52 @@ export default function Navbar() {
       <div className="nav-right">
         <ThemeToggle />
         {username ? (
-          <>
-            <div className="nav-avatar" onClick={handleLogout} title="Click to logout">
+          <div className="nav-avatar-container">
+            <div
+              className="nav-avatar"
+              onClick={() => setDropdownOpen(!dropdownOpen)}
+              title="Profile menu"
+            >
               {initial}
             </div>
-          </>
+            {dropdownOpen && (
+              <div className="nav-dropdown fade-in">
+                <Link
+                  href="/profile"
+                  className="nav-dropdown-item"
+                  onClick={() => setDropdownOpen(false)}
+                >
+                  <svg viewBox="0 0 24 24">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                  Profile
+                </Link>
+                <div className="nav-dropdown-divider" />
+                <button
+                  className="nav-dropdown-item"
+                  onClick={() => {
+                    setDropdownOpen(false);
+                    handleLogout();
+                  }}
+                  style={{ color: "var(--error)" }}
+                >
+                  <svg viewBox="0 0 24 24">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <polyline points="16 17 21 12 16 7" />
+                    <line x1="21" y1="12" x2="9" y2="12" />
+                  </svg>
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
         ) : (
-          <Link href="/login" className="btn btn-primary" style={{ padding: "8px 18px", fontSize: "13px" }}>
+          <Link
+            href="/login"
+            className="btn btn-primary"
+            style={{ padding: "8px 18px", fontSize: "13px" }}
+          >
             Sign In
           </Link>
         )}

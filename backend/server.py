@@ -312,10 +312,11 @@ def admin_stats():
             SELECT u.id, u.username, u.created_at,
                    COUNT(s.id) AS sub_count,
                    COUNT(DISTINCT CASE WHEN s.status = 'Pass' THEN s.problem_id END) AS solved,
-                   MAX(s.created_at) AS last_active
+                   MAX(s.created_at) AS last_active,
+                   COALESCE(u.is_admin, FALSE) AS is_admin
             FROM users u
             LEFT JOIN submissions s ON u.id = s.user_id
-            GROUP BY u.id, u.username, u.created_at
+            GROUP BY u.id, u.username, u.created_at, u.is_admin
             ORDER BY sub_count DESC
         """)
         recent_users = []
@@ -326,7 +327,8 @@ def admin_stats():
                 "joined": row[2].isoformat() if row[2] else None,
                 "submissions": row[3],
                 "solved": row[4],
-                "last_active": row[5].isoformat() if row[5] else None
+                "last_active": row[5].isoformat() if row[5] else None,
+                "is_admin": bool(row[6])
             })
 
         result = {
@@ -342,6 +344,82 @@ def admin_stats():
         cache_set("admin:stats", result, ttl=30)
         return jsonify(result)
     finally:
+        conn.close()
+
+@app.route("/api/v1/admin/database", methods=["GET"])
+@require_admin
+def admin_database():
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        tables = ["users", "problems", "submissions", "chat_sessions"]
+        table_stats = []
+        for table in tables:
+            execute_query(cur, f"SELECT COUNT(*) FROM {table}")
+            count = cur.fetchone()[0]
+            # Get estimated size using pg_relation_size
+            execute_query(cur, f"SELECT pg_size_pretty(pg_total_relation_size('{table}'))")
+            size = cur.fetchone()[0]
+            table_stats.append({
+                "table": table,
+                "rows": count,
+                "size": size
+            })
+        
+        execute_query(cur, "SELECT pg_size_pretty(pg_database_size(current_database()))")
+        total_db_size = cur.fetchone()[0]
+        
+        return jsonify({
+            "tables": table_stats,
+            "total_size": total_db_size
+        })
+    except Exception as e:
+        print(f"DB Stat error: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
+
+@app.route("/api/v1/admin/users/<int:user_id>", methods=["PUT"])
+@require_admin
+def update_user_status(user_id):
+    data = request.json
+    is_admin = data.get("is_admin", False)
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, "UPDATE users SET is_admin = %s WHERE id = %s", (is_admin, user_id))
+        conn.commit()
+        return jsonify({"message": "User updated successfully"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        redis_client.delete("admin:stats")
+        conn.close()
+
+@app.route("/api/v1/admin/users/<int:user_id>", methods=["DELETE"])
+@require_admin
+def delete_user(user_id):
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        # Ensure we don't delete the last admin
+        execute_query(cur, "SELECT COUNT(*) FROM users WHERE is_admin = TRUE")
+        if cur.fetchone()[0] == 1:
+            execute_query(cur, "SELECT is_admin FROM users WHERE id = %s", (user_id,))
+            user = cur.fetchone()
+            if user and user[0]:
+                return jsonify({"error": "Cannot delete the only admin"}), 400
+        
+        # Need to clean up related data first
+        execute_query(cur, "DELETE FROM submissions WHERE user_id = %s", (user_id,))
+        execute_query(cur, "DELETE FROM chat_sessions WHERE user_id = %s", (user_id,))
+        execute_query(cur, "DELETE FROM users WHERE id = %s", (user_id,))
+        conn.commit()
+        return jsonify({"message": "User deleted"}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        redis_client.delete("admin:stats")
         conn.close()
 
 @app.route("/api/v1/admin/problems", methods=["POST"])
@@ -632,6 +710,27 @@ def seed_problems(cur):
 
         ("palindrome_number", "Palindrome Number", """
 <p>Given an integer <code>x</code>, return <code>true</code> if <code>x</code> is a <strong>palindrome</strong>, and <code>false</code> otherwise.</p>
+
+<div class="example-box">
+    <div class="example-title">Example 1:</div>
+    <p><span class="example-label">Input:</span> x = 121</p>
+    <p><span class="example-label">Output:</span> true</p>
+    <p style="color: #64748b; font-size: 0.85em;">Explanation: 121 reads as 121 from left to right and from right to left.</p>
+</div>
+
+<div class="example-box">
+    <div class="example-title">Example 2:</div>
+    <p><span class="example-label">Input:</span> x = -121</p>
+    <p><span class="example-label">Output:</span> false</p>
+    <p style="color: #64748b; font-size: 0.85em;">Explanation: From left to right, it reads -121. From right to left, it becomes 121-. Therefore it is not a palindrome.</p>
+</div>
+
+<div class="example-box">
+    <div class="example-title">Example 3:</div>
+    <p><span class="example-label">Input:</span> x = 10</p>
+    <p><span class="example-label">Output:</span> false</p>
+    <p style="color: #64748b; font-size: 0.85em;">Explanation: Reads 01 from right to left. Therefore it is not a palindrome.</p>
+</div>
 """, "Easy", json.dumps({
     "python": "class Solution:\n    def isPalindrome(self, x):\n        ",
     "cpp": "class Solution {\npublic:\n    bool isPalindrome(int x) {\n        \n    }\n};"
@@ -639,13 +738,63 @@ def seed_problems(cur):
 
         ("valid_parentheses", "Valid Parentheses", """
 <p>Given a string <code>s</code> containing just the characters <code>'('</code>, <code>')'</code>, <code>'{'</code>, <code>'}'</code>, <code>'['</code> and <code>']'</code>, determine if the input string is valid.</p>
+<p>An input string is valid if:</p>
+<ul style="margin-left: 20px;">
+    <li>Open brackets must be closed by the same type of brackets.</li>
+    <li>Open brackets must be closed in the correct order.</li>
+    <li>Every close bracket has a corresponding open bracket of the same type.</li>
+</ul>
+
+<div class="example-box">
+    <div class="example-title">Example 1:</div>
+    <p><span class="example-label">Input:</span> s = "()"</p>
+    <p><span class="example-label">Output:</span> true</p>
+</div>
+
+<div class="example-box">
+    <div class="example-title">Example 2:</div>
+    <p><span class="example-label">Input:</span> s = "()[]{}"</p>
+    <p><span class="example-label">Output:</span> true</p>
+</div>
+
+<div class="example-box">
+    <div class="example-title">Example 3:</div>
+    <p><span class="example-label">Input:</span> s = "(]"</p>
+    <p><span class="example-label">Output:</span> false</p>
+</div>
 """, "Medium", json.dumps({
     "python": "class Solution:\n    def isValid(self, s):\n        ",
     "cpp": "class Solution {\npublic:\n    bool isValid(string s) {\n        \n    }\n};"
 })),
 
         ("fibonacci_number", "Fibonacci Number", """
-<p>The <strong>Fibonacci numbers</strong>, commonly denoted <code>F(n)</code> form a sequence, called the <strong>Fibonacci sequence</strong>, such that each number is the sum of the two preceding ones, starting from <code>0</code> and <code>1</code>.</p>
+<p>The <strong>Fibonacci numbers</strong>, commonly denoted <code>F(n)</code> form a sequence, called the <strong>Fibonacci sequence</strong>, such that each number is the sum of the two preceding ones, starting from <code>0</code> and <code>1</code>. That is,</p>
+<pre style="background: rgba(0,0,0,0.1); padding: 10px; border-radius: 4px;">
+F(0) = 0, F(1) = 1
+F(n) = F(n - 1) + F(n - 2), for n > 1.
+</pre>
+<p>Given <code>n</code>, calculate <code>F(n)</code>.</p>
+
+<div class="example-box">
+    <div class="example-title">Example 1:</div>
+    <p><span class="example-label">Input:</span> n = 2</p>
+    <p><span class="example-label">Output:</span> 1</p>
+    <p style="color: #64748b; font-size: 0.85em;">Explanation: F(2) = F(1) + F(0) = 1 + 0 = 1.</p>
+</div>
+
+<div class="example-box">
+    <div class="example-title">Example 2:</div>
+    <p><span class="example-label">Input:</span> n = 3</p>
+    <p><span class="example-label">Output:</span> 2</p>
+    <p style="color: #64748b; font-size: 0.85em;">Explanation: F(3) = F(2) + F(1) = 1 + 1 = 2.</p>
+</div>
+
+<div class="example-box">
+    <div class="example-title">Example 3:</div>
+    <p><span class="example-label">Input:</span> n = 4</p>
+    <p><span class="example-label">Output:</span> 3</p>
+    <p style="color: #64748b; font-size: 0.85em;">Explanation: F(4) = F(3) + F(2) = 2 + 1 = 3.</p>
+</div>
 """, "Easy", json.dumps({
     "python": "class Solution:\n    def fib(self, n):\n        ",
     "cpp": "class Solution {\npublic:\n    int fib(int n) {\n        \n    }\n};"
@@ -654,6 +803,18 @@ def seed_problems(cur):
         ("reverse_string", "Reverse String", """
 <p>Write a function that reverses a string. The input string is given as an array of characters <code>s</code>.</p>
 <p>You must do this by modifying the input array <strong>in-place</strong> with <code>O(1)</code> extra memory.</p>
+
+<div class="example-box">
+    <div class="example-title">Example 1:</div>
+    <p><span class="example-label">Input:</span> s = ["h","e","l","l","o"]</p>
+    <p><span class="example-label">Output:</span> ["o","l","l","e","h"]</p>
+</div>
+
+<div class="example-box">
+    <div class="example-title">Example 2:</div>
+    <p><span class="example-label">Input:</span> s = ["H","a","n","n","a","h"]</p>
+    <p><span class="example-label">Output:</span> ["h","a","n","n","a","H"]</p>
+</div>
 """, "Easy", json.dumps({
     "python": "class Solution:\n    def reverseString(self, s):\n        \"\"\"\n        Do not return anything, modify s in-place instead.\n        \"\"\"\n        ",
     "cpp": "class Solution {\npublic:\n    void reverseString(vector<char>& s) {\n        \n    }\n};"
@@ -943,6 +1104,59 @@ def get_submissions():
     finally:
         conn.close()
 
+import re
+def simplify_error_message(raw_output, lang):
+    if not raw_output or not raw_output.strip():
+        return "Execution failed with no output."
+        
+    lines = [line.strip() for line in raw_output.split("\n") if line.strip()]
+    
+    if lang == "cpp":
+        for line in lines:
+            if "error:" in line:
+                try:
+                    err_msg = line.split("error:")[1].strip()
+                    loc_match = re.search(r'solution\.cpp:(\d+):', line)
+                    line_text = f" on line {loc_match.group(1)}" if loc_match else ""
+                    
+                    if "does not name a type" in err_msg:
+                        item = err_msg.split()[0].replace("'", "")
+                        return f"Error{line_text}: C++ doesn't recognize '{item}'. Did you forget an #include or make a typo?"
+                    elif "expected" in err_msg and "before" in err_msg:
+                        return f"Syntax Error{line_text}: {err_msg.capitalize().replace(';', 'semicolon (;)')}. You probably missed a semicolon."
+                    elif "has no member named" in err_msg:
+                        return f"Error{line_text}: {err_msg.capitalize()}. Make sure your function name exactly matches the expected!"
+                    elif "was not declared in this scope" in err_msg:
+                        item = err_msg.split()[0].replace("'", "")
+                        return f"Variable Name Error{line_text}: You used '{item}' without defining it first."
+                    else:
+                        return f"C++ Error{line_text}: {err_msg.capitalize()}"
+                except:
+                    pass
+        return "Compilation Error: Your code failed to compile. Please check for syntax mistakes."
+    elif lang == "python":
+        for line in reversed(lines):
+            if "Error:" in line or "Exception:" in line:
+                try:
+                    err_msg = line.split(":", 1)[1].strip()
+                    if "SyntaxError" in line:
+                        return f"Syntax Error: You have a typo or invalid Python syntax. Check spelling and parentheses."
+                    elif "IndentationError" in line:
+                        return f"Indentation Error: Your spaces or tabs don't align correctly."
+                    elif "NameError" in line:
+                        return f"Variable Definition Error: {err_msg}. You tried to use something that isn't defined."
+                    elif "TypeError" in line:
+                        return f"Type Error: {err_msg}. You might be mixing incompatible data types."
+                    elif "IndexError" in line:
+                        return f"Index Error: {err_msg}. You're trying to access a list element outside its bounds."
+                    else:
+                        return f"Python {line}"
+                except:
+                    pass
+        return "Runtime Error: Your Python code crashed while running. Please check your logic."
+    
+    return raw_output
+
 # Helper: Execute code in Docker
 def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=None, adhoc_test_data=None):
     # Track execution in Redis for monitoring
@@ -1077,6 +1291,7 @@ def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=No
         # Determine Pass/Fail based on test output
         if res["code"] != 0:
             exec_status = "Fail"
+            execution_output = simplify_error_message(execution_output, lang)
         elif "FAIL" in execution_output:
             exec_status = "Fail"
         else:

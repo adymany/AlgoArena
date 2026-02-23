@@ -1,5 +1,0 @@
-flower,flow,flight fl
-dog,racecar,car NONE
-interspecies,interstellar,interstate inter
-abc,abc,abc abc
-a,a,a a

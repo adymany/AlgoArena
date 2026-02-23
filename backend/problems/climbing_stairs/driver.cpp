@@ -1,7 +1,7 @@
 #include <iostream>
-#include "solution.cpp"
-
 using namespace std;
+
+#include "solution.cpp"
 
 int main() {
     int n, expected;

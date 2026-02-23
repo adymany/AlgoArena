@@ -1,8 +1,8 @@
 #include <iostream>
 #include <vector>
-#include "solution.cpp"
-
 using namespace std;
+
+#include "solution.cpp"
 
 int main() {
     int n;

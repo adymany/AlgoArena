@@ -6,7 +6,14 @@ import { getApiBase, fetchJSON } from "@/lib/api";
 import Navbar from "@/components/Navbar";
 import { ThemePicker, THEMES } from "@/components/ThemeSelector";
 import Toast, { showToast } from "@/components/Toast";
-import { IconPalette, IconBarChart, IconSearch, IconClipboard, IconCompass, IconRocket } from "@/components/Icons";
+import {
+  IconPalette,
+  IconBarChart,
+  IconSearch,
+  IconClipboard,
+  IconCompass,
+  IconRocket,
+} from "@/components/Icons";
 import type { ReactNode } from "react";
 
 interface Problem {
@@ -31,7 +38,13 @@ interface Submission {
 }
 
 // Tutorial step definitions
-const TUTORIAL_STEPS: { icon: ReactNode; title: string; desc: string; target: string | null; isThemeStep: boolean }[] = [
+const TUTORIAL_STEPS: {
+  icon: ReactNode;
+  title: string;
+  desc: string;
+  target: string | null;
+  isThemeStep: boolean;
+}[] = [
   {
     icon: <IconPalette />,
     title: "Pick Your Theme",
@@ -90,7 +103,10 @@ export default function ProblemsPage() {
   useEffect(() => {
     const uid = localStorage.getItem("user_id");
     const token = localStorage.getItem("token");
-    if (!uid || !token) { router.push("/login"); return; }
+    if (!uid || !token) {
+      router.push("/login");
+      return;
+    }
     setUserId(uid);
 
     // Check if tutorial was seen
@@ -114,19 +130,23 @@ export default function ProblemsPage() {
 
   // Derived sets
   const solvedSet = new Set(
-    submissions.filter((s) => s.status === "accepted").map((s) => s.problem_id)
+    submissions.filter((s) => s.status === "accepted").map((s) => s.problem_id),
   );
   const attemptedSet = new Set(submissions.map((s) => s.problem_id));
 
   // Filter
   const filtered = problems.filter((p) => {
     const matchSearch = p.title.toLowerCase().includes(search.toLowerCase());
-    const matchDiff = difficulty === "all" || p.difficulty?.toLowerCase() === difficulty;
+    const matchDiff =
+      difficulty === "all" || p.difficulty?.toLowerCase() === difficulty;
     return matchSearch && matchDiff;
   });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
-  const paginated = filtered.slice((currentPage - 1) * perPage, currentPage * perPage);
+  const paginated = filtered.slice(
+    (currentPage - 1) * perPage,
+    currentPage * perPage,
+  );
 
   // Tutorial
   const startTutorial = () => {
@@ -198,8 +218,10 @@ export default function ProblemsPage() {
 
   const difficultyLabel = (d: string) => {
     const dl = d?.toLowerCase();
-    if (dl === "easy") return <span className="diff-badge diff-easy">Easy</span>;
-    if (dl === "medium") return <span className="diff-badge diff-medium">Medium</span>;
+    if (dl === "easy")
+      return <span className="diff-badge diff-easy">Easy</span>;
+    if (dl === "medium")
+      return <span className="diff-badge diff-medium">Medium</span>;
     return <span className="diff-badge diff-hard">Hard</span>;
   };
 
@@ -221,13 +243,16 @@ export default function ProblemsPage() {
             <div className="stat-label">Problems Solved</div>
             <div className="stat-value accent">{stats?.solved ?? 0}</div>
             <div className="stat-sub">
-              <span className="stat-up">↑</span> out of {stats?.total_problems ?? 0}
+              <span className="stat-up">↑</span> out of{" "}
+              {stats?.total_problems ?? 0}
             </div>
           </div>
           <div className="stat-card">
             <div className="stat-label">Success Rate</div>
             <div className="stat-value" style={{ color: "var(--success)" }}>
-              {stats?.pass_rate != null ? `${Math.round(stats.pass_rate)}%` : "0%"}
+              {stats?.pass_rate != null
+                ? `${Math.round(stats.pass_rate)}%`
+                : "0%"}
             </div>
             <div className="stat-sub">across all submissions</div>
           </div>
@@ -256,14 +281,20 @@ export default function ProblemsPage() {
               type="text"
               placeholder="Search problems..."
               value={search}
-              onChange={(e) => { setSearch(e.target.value); setCurrentPage(1); }}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setCurrentPage(1);
+              }}
             />
           </div>
           {["all", "easy", "medium", "hard"].map((d) => (
             <button
               key={d}
               className={`filter-btn${difficulty === d ? " active" : ""}`}
-              onClick={() => { setDifficulty(d); setCurrentPage(1); }}
+              onClick={() => {
+                setDifficulty(d);
+                setCurrentPage(1);
+              }}
             >
               {d === "all" ? "All" : d.charAt(0).toUpperCase() + d.slice(1)}
             </button>
@@ -282,32 +313,59 @@ export default function ProblemsPage() {
                 <th>Acceptance</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="stagger">
               {paginated.map((p, i) => {
                 const idx = (currentPage - 1) * perPage + i + 1;
                 const solved = solvedSet.has(p.slug);
                 const attempted = attemptedSet.has(p.slug);
-                const acceptance = p.acceptance ?? Math.floor(Math.random() * 40 + 30);
+                const acceptance =
+                  p.acceptance ?? Math.floor(Math.random() * 40 + 30);
                 return (
-                  <tr key={p.slug} onClick={() => router.push(`/problems/${p.slug}`)}>
+                  <tr
+                    key={p.slug}
+                    onClick={() => router.push(`/problems/${p.slug}`)}
+                    style={{ animationDelay: `${0.05 * i}s` }}
+                  >
                     <td className="status-cell">
                       {solved ? (
                         <div className="status-dot-solved">
-                          <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12" /></svg>
+                          <svg viewBox="0 0 24 24">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
                         </div>
                       ) : attempted ? (
-                        <div className="status-dot-solved" style={{ background: "rgba(249,226,175,0.15)" }}>
-                          <svg viewBox="0 0 24 24" style={{ stroke: "var(--warning)" }}><circle cx="12" cy="12" r="5" /></svg>
+                        <div
+                          className="status-dot-solved"
+                          style={{ background: "rgba(249,226,175,0.15)" }}
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            style={{ stroke: "var(--warning)" }}
+                          >
+                            <circle cx="12" cy="12" r="5" />
+                          </svg>
                         </div>
                       ) : null}
                     </td>
-                    <td style={{ color: "var(--text-muted)", fontWeight: 600, fontSize: 13 }}>{idx}</td>
+                    <td
+                      style={{
+                        color: "var(--text-muted)",
+                        fontWeight: 600,
+                        fontSize: 13,
+                      }}
+                    >
+                      {idx}
+                    </td>
                     <td>
                       <div className="problem-title-cell">
                         <span className="problem-title">{p.title}</span>
                         {p.tags && p.tags.length > 0 && (
                           <div className="problem-tags">
-                            {p.tags.map((t) => <span key={t} className="ptag">{t}</span>)}
+                            {p.tags.map((t) => (
+                              <span key={t} className="ptag">
+                                {t}
+                              </span>
+                            ))}
                           </div>
                         )}
                       </div>
@@ -315,7 +373,10 @@ export default function ProblemsPage() {
                     <td>{difficultyLabel(p.difficulty)}</td>
                     <td>
                       <div className="accept-bar">
-                        <div className="accept-fill" style={{ width: `${acceptance}%` }} />
+                        <div
+                          className="accept-fill"
+                          style={{ width: `${acceptance}%` }}
+                        />
                       </div>
                       <div className="accept-text">{acceptance}%</div>
                     </td>
@@ -324,7 +385,14 @@ export default function ProblemsPage() {
               })}
               {paginated.length === 0 && (
                 <tr>
-                  <td colSpan={5} style={{ textAlign: "center", color: "var(--text-muted)", padding: 40 }}>
+                  <td
+                    colSpan={5}
+                    style={{
+                      textAlign: "center",
+                      color: "var(--text-muted)",
+                      padding: 40,
+                    }}
+                  >
                     No problems found
                   </td>
                 </tr>
@@ -336,7 +404,11 @@ export default function ProblemsPage() {
         {/* Pagination */}
         {totalPages > 1 && (
           <div className="pagination">
-            <button className="page-btn" disabled={currentPage === 1} onClick={() => setCurrentPage(currentPage - 1)}>
+            <button
+              className="page-btn"
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage(currentPage - 1)}
+            >
               &lt;
             </button>
             {Array.from({ length: totalPages }, (_, i) => i + 1).map((pg) => (
@@ -348,7 +420,11 @@ export default function ProblemsPage() {
                 {pg}
               </button>
             ))}
-            <button className="page-btn" disabled={currentPage === totalPages} onClick={() => setCurrentPage(currentPage + 1)}>
+            <button
+              className="page-btn"
+              disabled={currentPage === totalPages}
+              onClick={() => setCurrentPage(currentPage + 1)}
+            >
               &gt;
             </button>
           </div>
@@ -360,15 +436,19 @@ export default function ProblemsPage() {
         <div className="tutorial-overlay active">
           <div className="tutorial-welcome">
             <div className="welcome-card">
-              <div className="welcome-icon"><IconRocket /></div>
+              <div className="welcome-icon">
+                <IconRocket />
+              </div>
               <h2>Welcome to AlgoArena!</h2>
               <p>
-                Let&apos;s take a quick tour to help you get started. We&apos;ll show you the key features
-                of the problems dashboard.
+                Let&apos;s take a quick tour to help you get started. We&apos;ll
+                show you the key features of the problems dashboard.
               </p>
               <div className="welcome-actions">
                 <button className="welcome-start" onClick={startTutorial}>
-                  <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" /></svg>
+                  <svg viewBox="0 0 24 24">
+                    <polygon points="5 3 19 12 5 21 5 3" />
+                  </svg>
                   Start Tour
                 </button>
                 <button className="welcome-dismiss" onClick={dismissTutorial}>
@@ -384,7 +464,10 @@ export default function ProblemsPage() {
       {tutorialActive && (
         <div className="tutorial-overlay active">
           <div className="tutorial-spotlight" ref={spotlightRef} />
-          <div className={`tutorial-card${TUTORIAL_STEPS[tutorialStep].isThemeStep ? " tutorial-card-wide" : ""}`} ref={cardRef}>
+          <div
+            className={`tutorial-card${TUTORIAL_STEPS[tutorialStep].isThemeStep ? " tutorial-card-wide" : ""}`}
+            ref={cardRef}
+          >
             <div className="tutorial-step-indicator">
               {TUTORIAL_STEPS.map((_, i) => (
                 <div
@@ -393,7 +476,9 @@ export default function ProblemsPage() {
                 />
               ))}
             </div>
-            <div className="tutorial-icon">{TUTORIAL_STEPS[tutorialStep].icon}</div>
+            <div className="tutorial-icon">
+              {TUTORIAL_STEPS[tutorialStep].icon}
+            </div>
             <h3>{TUTORIAL_STEPS[tutorialStep].title}</h3>
             <p>{TUTORIAL_STEPS[tutorialStep].desc}</p>
             {TUTORIAL_STEPS[tutorialStep].isThemeStep && (
@@ -402,10 +487,14 @@ export default function ProblemsPage() {
               </div>
             )}
             <div className="tutorial-actions">
-              <button className="tutorial-skip" onClick={dismissTutorial}>Skip tour</button>
+              <button className="tutorial-skip" onClick={dismissTutorial}>
+                Skip tour
+              </button>
               <button className="tutorial-next" onClick={nextStep}>
                 {tutorialStep < TUTORIAL_STEPS.length - 1 ? "Next" : "Finish"}
-                <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6" /></svg>
+                <svg viewBox="0 0 24 24">
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
               </button>
             </div>
           </div>
