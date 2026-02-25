@@ -34,10 +34,9 @@ export default function Navbar() {
       fetchJSON<{ is_admin?: boolean }>(
         `${getApiBase()}/api/v1/check-admin`,
       ).then((data) => {
-        if (data?.is_admin) {
-          setIsAdmin(true);
-          localStorage.setItem("is_admin", "true");
-        }
+        const adminStatus = !!data?.is_admin;
+        setIsAdmin(adminStatus);
+        localStorage.setItem("is_admin", adminStatus ? "true" : "false");
       });
     }
   }, []);
@@ -79,6 +78,20 @@ export default function Navbar() {
             <rect x="3" y="14" width="7" height="7" />
           </svg>
           Problems
+        </Link>
+        <Link
+          href="/leaderboard"
+          className={`nav-link${pathname === "/leaderboard" ? " active" : ""}`}
+        >
+          <svg viewBox="0 0 24 24">
+            <path d="M6 9H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2" />
+            <path d="M18 9h2a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2h-2" />
+            <rect x="6" y="2" width="12" height="7" rx="1" />
+            <path d="M4 22h16" />
+            <path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 19.24 7 20v2" />
+            <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 19.24 17 20v2" />
+          </svg>
+          Leaderboard
         </Link>
         <Link
           href="/profile"

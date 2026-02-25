@@ -20,7 +20,6 @@ interface Problem {
   slug: string;
   title: string;
   difficulty: string;
-  tags?: string[];
   acceptance?: number;
 }
 
@@ -91,6 +90,7 @@ export default function ProblemsPage() {
   const [search, setSearch] = useState("");
   const [difficulty, setDifficulty] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
+  const [isLoading, setIsLoading] = useState(true);
   const perPage = 15;
 
   // Tutorial state
@@ -104,7 +104,7 @@ export default function ProblemsPage() {
     const uid = localStorage.getItem("user_id");
     const token = localStorage.getItem("token");
     if (!uid || !token) {
-      router.push("/login");
+      router.replace("/login");
       return;
     }
     setUserId(uid);
@@ -125,7 +125,8 @@ export default function ProblemsPage() {
         setStats(s ?? null);
         setSubmissions(Array.isArray(sub) ? sub : []);
       })
-      .catch(() => showToast("Failed to load data", "error"));
+      .catch(() => showToast("Failed to load data", "error"))
+      .finally(() => setIsLoading(false));
   }, [router]);
 
   // Derived sets
@@ -237,197 +238,240 @@ export default function ProblemsPage() {
       <Navbar />
 
       <div className="page-body">
-        {/* Stats */}
-        <div className="stats-row stagger">
-          <div className="stat-card">
-            <div className="stat-label">Problems Solved</div>
-            <div className="stat-value accent">{stats?.solved ?? 0}</div>
-            <div className="stat-sub">
-              <span className="stat-up">↑</span> out of{" "}
-              {stats?.total_problems ?? 0}
+        {isLoading ? (
+          <div className="page-skeleton fade-in">
+            {/* Stats skeleton */}
+            <div className="skeleton-stats-row">
+              {[1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className="skeleton skeleton-card"
+                  style={{ minHeight: 90 }}
+                />
+              ))}
+            </div>
+            {/* Toolbar skeleton */}
+            <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+              <div
+                className="skeleton"
+                style={{ height: 40, flex: 1, maxWidth: 300 }}
+              />
+              <div className="skeleton" style={{ height: 40, width: 80 }} />
+              <div className="skeleton" style={{ height: 40, width: 80 }} />
+              <div className="skeleton" style={{ height: 40, width: 80 }} />
+            </div>
+            {/* Table skeleton */}
+            <div className="skeleton-table">
+              <div className="skeleton-table-header">
+                {[50, 50, 200, 80, 80].map((w, i) => (
+                  <div
+                    key={i}
+                    className="skeleton skeleton-text"
+                    style={{ width: w, marginBottom: 0 }}
+                  />
+                ))}
+              </div>
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="skeleton-row">
+                  <div
+                    className="skeleton"
+                    style={{ width: 24, height: 24, borderRadius: "50%" }}
+                  />
+                  <div
+                    className="skeleton skeleton-text sm"
+                    style={{ marginBottom: 0 }}
+                  />
+                </div>
+              ))}
             </div>
           </div>
-          <div className="stat-card">
-            <div className="stat-label">Success Rate</div>
-            <div className="stat-value" style={{ color: "var(--success)" }}>
-              {stats?.pass_rate != null
-                ? `${Math.round(stats.pass_rate)}%`
-                : "0%"}
+        ) : (
+          <>
+            {/* Stats */}
+            <div className="stats-row stagger">
+              <div className="stat-card">
+                <div className="stat-label">Problems Solved</div>
+                <div className="stat-value accent">{stats?.solved ?? 0}</div>
+                <div className="stat-sub">
+                  <span className="stat-up">↑</span> out of{" "}
+                  {stats?.total_problems ?? 0}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Success Rate</div>
+                <div className="stat-value" style={{ color: "var(--success)" }}>
+                  {stats?.pass_rate != null
+                    ? `${Math.round(stats.pass_rate)}%`
+                    : "0%"}
+                </div>
+                <div className="stat-sub">across all submissions</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Total Submissions</div>
+                <div className="stat-value">
+                  {stats?.total_submissions ?? 0}
+                </div>
+                <div className="stat-sub">keep going!</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Attempted</div>
+                <div className="stat-value" style={{ color: "var(--warning)" }}>
+                  {stats?.attempted ?? 0}
+                </div>
+                <div className="stat-sub">problems tried so far</div>
+              </div>
             </div>
-            <div className="stat-sub">across all submissions</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Total Submissions</div>
-            <div className="stat-value">{stats?.total_submissions ?? 0}</div>
-            <div className="stat-sub">keep going!</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-label">Attempted</div>
-            <div className="stat-value" style={{ color: "var(--warning)" }}>
-              {stats?.attempted ?? 0}
-            </div>
-            <div className="stat-sub">problems tried so far</div>
-          </div>
-        </div>
 
-        {/* Toolbar */}
-        <div className="toolbar">
-          <div className="search-box">
-            <svg viewBox="0 0 24 24">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              type="text"
-              placeholder="Search problems..."
-              value={search}
-              onChange={(e) => {
-                setSearch(e.target.value);
-                setCurrentPage(1);
-              }}
-            />
-          </div>
-          {["all", "easy", "medium", "hard"].map((d) => (
-            <button
-              key={d}
-              className={`filter-btn${difficulty === d ? " active" : ""}`}
-              onClick={() => {
-                setDifficulty(d);
-                setCurrentPage(1);
-              }}
-            >
-              {d === "all" ? "All" : d.charAt(0).toUpperCase() + d.slice(1)}
-            </button>
-          ))}
-        </div>
+            {/* Toolbar */}
+            <div className="toolbar">
+              <div className="search-box">
+                <svg viewBox="0 0 24 24">
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <input
+                  type="text"
+                  placeholder="Search problems..."
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                />
+              </div>
+              {["all", "easy", "medium", "hard"].map((d) => (
+                <button
+                  key={d}
+                  className={`filter-btn${difficulty === d ? " active" : ""}`}
+                  onClick={() => {
+                    setDifficulty(d);
+                    setCurrentPage(1);
+                  }}
+                >
+                  {d === "all" ? "All" : d.charAt(0).toUpperCase() + d.slice(1)}
+                </button>
+              ))}
+            </div>
 
-        {/* Problems Table */}
-        <div className="problems-table">
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: 50 }}>Status</th>
-                <th style={{ width: 50 }}>#</th>
-                <th>Title</th>
-                <th>Difficulty</th>
-                <th>Acceptance</th>
-              </tr>
-            </thead>
-            <tbody className="stagger">
-              {paginated.map((p, i) => {
-                const idx = (currentPage - 1) * perPage + i + 1;
-                const solved = solvedSet.has(p.slug);
-                const attempted = attemptedSet.has(p.slug);
-                const acceptance =
-                  p.acceptance ?? Math.floor(Math.random() * 40 + 30);
-                return (
-                  <tr
-                    key={p.slug}
-                    onClick={() => router.push(`/problems/${p.slug}`)}
-                    style={{ animationDelay: `${0.05 * i}s` }}
-                  >
-                    <td className="status-cell">
-                      {solved ? (
-                        <div className="status-dot-solved">
-                          <svg viewBox="0 0 24 24">
-                            <polyline points="20 6 9 17 4 12" />
-                          </svg>
-                        </div>
-                      ) : attempted ? (
-                        <div
-                          className="status-dot-solved"
-                          style={{ background: "rgba(249,226,175,0.15)" }}
-                        >
-                          <svg
-                            viewBox="0 0 24 24"
-                            style={{ stroke: "var(--warning)" }}
-                          >
-                            <circle cx="12" cy="12" r="5" />
-                          </svg>
-                        </div>
-                      ) : null}
-                    </td>
-                    <td
-                      style={{
-                        color: "var(--text-muted)",
-                        fontWeight: 600,
-                        fontSize: 13,
-                      }}
-                    >
-                      {idx}
-                    </td>
-                    <td>
-                      <div className="problem-title-cell">
-                        <span className="problem-title">{p.title}</span>
-                        {p.tags && p.tags.length > 0 && (
-                          <div className="problem-tags">
-                            {p.tags.map((t) => (
-                              <span key={t} className="ptag">
-                                {t}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                    <td>{difficultyLabel(p.difficulty)}</td>
-                    <td>
-                      <div className="accept-bar">
-                        <div
-                          className="accept-fill"
-                          style={{ width: `${acceptance}%` }}
-                        />
-                      </div>
-                      <div className="accept-text">{acceptance}%</div>
-                    </td>
+            {/* Problems Table */}
+            <div className="problems-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ width: 50 }}>Status</th>
+                    <th style={{ width: 50 }}>#</th>
+                    <th>Title</th>
+                    <th>Difficulty</th>
+                    <th>Acceptance</th>
                   </tr>
-                );
-              })}
-              {paginated.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={5}
-                    style={{
-                      textAlign: "center",
-                      color: "var(--text-muted)",
-                      padding: 40,
-                    }}
-                  >
-                    No problems found
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                </thead>
+                <tbody className="stagger">
+                  {paginated.map((p, i) => {
+                    const idx = (currentPage - 1) * perPage + i + 1;
+                    const solved = solvedSet.has(p.slug);
+                    const attempted = attemptedSet.has(p.slug);
+                    const acceptance = p.acceptance ?? 0;
+                    return (
+                      <tr
+                        key={p.slug}
+                        onClick={() => router.push(`/problems/${p.slug}`)}
+                        style={{ animationDelay: `${0.05 * i}s` }}
+                      >
+                        <td className="status-cell">
+                          {solved ? (
+                            <div className="status-dot-solved">
+                              <svg viewBox="0 0 24 24">
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                            </div>
+                          ) : attempted ? (
+                            <div
+                              className="status-dot-solved"
+                              style={{ background: "rgba(249,226,175,0.15)" }}
+                            >
+                              <svg
+                                viewBox="0 0 24 24"
+                                style={{ stroke: "var(--warning)" }}
+                              >
+                                <circle cx="12" cy="12" r="5" />
+                              </svg>
+                            </div>
+                          ) : null}
+                        </td>
+                        <td
+                          style={{
+                            color: "var(--text-muted)",
+                            fontWeight: 600,
+                            fontSize: 13,
+                          }}
+                        >
+                          {idx}
+                        </td>
+                        <td>
+                          <span className="problem-title">{p.title}</span>
+                        </td>
+                        <td>{difficultyLabel(p.difficulty)}</td>
+                        <td>
+                          <div className="accept-bar">
+                            <div
+                              className="accept-fill"
+                              style={{ width: `${acceptance}%` }}
+                            />
+                          </div>
+                          <div className="accept-text">{acceptance}%</div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {paginated.length === 0 && (
+                    <tr>
+                      <td
+                        colSpan={5}
+                        style={{
+                          textAlign: "center",
+                          color: "var(--text-muted)",
+                          padding: 40,
+                        }}
+                      >
+                        No problems found
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
 
-        {/* Pagination */}
-        {totalPages > 1 && (
-          <div className="pagination">
-            <button
-              className="page-btn"
-              disabled={currentPage === 1}
-              onClick={() => setCurrentPage(currentPage - 1)}
-            >
-              &lt;
-            </button>
-            {Array.from({ length: totalPages }, (_, i) => i + 1).map((pg) => (
-              <button
-                key={pg}
-                className={`page-btn${currentPage === pg ? " active" : ""}`}
-                onClick={() => setCurrentPage(pg)}
-              >
-                {pg}
-              </button>
-            ))}
-            <button
-              className="page-btn"
-              disabled={currentPage === totalPages}
-              onClick={() => setCurrentPage(currentPage + 1)}
-            >
-              &gt;
-            </button>
-          </div>
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="pagination">
+                <button
+                  className="page-btn"
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage(currentPage - 1)}
+                >
+                  &lt;
+                </button>
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map(
+                  (pg) => (
+                    <button
+                      key={pg}
+                      className={`page-btn${currentPage === pg ? " active" : ""}`}
+                      onClick={() => setCurrentPage(pg)}
+                    >
+                      {pg}
+                    </button>
+                  ),
+                )}
+                <button
+                  className="page-btn"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage(currentPage + 1)}
+                >
+                  &gt;
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 

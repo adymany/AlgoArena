@@ -48,9 +48,24 @@ export default function ProblemDetailPage() {
   const [testCases, setTestCases] = useState<TestCase[]>([]);
   const [rawOutput, setRawOutput] = useState("");
   const [bottomHeight, setBottomHeight] = useState(200);
-  const [activePanelTab, setActivePanelTab] = useState<
-    "description" | "editorial"
-  >("description");
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    return () =>
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  };
 
   const isResizing = useRef(false);
   const startY = useRef(0);
@@ -59,7 +74,7 @@ export default function ProblemDetailPage() {
   useEffect(() => {
     const uid = localStorage.getItem("user_id");
     if (!uid) {
-      router.push("/login");
+      router.replace("/login");
       return;
     }
     setUserId(Number(uid));
@@ -310,52 +325,12 @@ export default function ProblemDetailPage() {
   return (
     <div className="ide-layout">
       <Navbar />
-      <div className="ide-sub-bar">
-        <div className="ide-problem-name">
-          {problem?.title || "Loading..."}
-          {problem && <> {diffBadge(problem.difficulty)}</>}
-        </div>
-        <div className="ide-nav-spacer" />
-        <div className="ide-nav-actions">
-          <button
-            className="run-btn"
-            onClick={handleRun}
-            disabled={isRunning || !problem}
-          >
-            <svg viewBox="0 0 24 24">
-              <polygon points="5 3 19 12 5 21 5 3" />
-            </svg>
-            {isRunning ? "Running..." : "Run"}
-          </button>
-          <button
-            className="submit-code-btn"
-            onClick={handleSubmit}
-            disabled={isSubmitting || !problem}
-          >
-            <svg viewBox="0 0 24 24">
-              <polyline points="20 6 9 17 4 12" />
-            </svg>
-            {isSubmitting ? "Submitting..." : "Submit"}
-          </button>
-        </div>
-      </div>
 
       <div className="panels">
         <div className="panel panel-left" style={{ width: `${leftWidth}%` }}>
           <div className="panel-header">
             <div className="panel-tabs">
-              <button
-                className={`panel-tab${activePanelTab === "description" ? " active" : ""}`}
-                onClick={() => setActivePanelTab("description")}
-              >
-                Description
-              </button>
-              <button
-                className={`panel-tab${activePanelTab === "editorial" ? " active" : ""}`}
-                onClick={() => setActivePanelTab("editorial")}
-              >
-                Editorial
-              </button>
+              <span className="panel-tab active">Description</span>
             </div>
           </div>
           <div className="panel-content">
@@ -395,6 +370,43 @@ export default function ProblemDetailPage() {
               <option value="python">Python</option>
               <option value="cpp">C++</option>
             </select>
+            <div style={{ flex: 1 }} />
+            <button
+              className="panel-action-btn"
+              onClick={toggleFullscreen}
+              title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+              style={{ marginRight: 4 }}
+            >
+              {isFullscreen ? (
+                <svg viewBox="0 0 24 24">
+                  <path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3" />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24">
+                  <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3" />
+                </svg>
+              )}
+            </button>
+            <button
+              className="run-btn"
+              onClick={handleRun}
+              disabled={isRunning || !problem}
+            >
+              <svg viewBox="0 0 24 24">
+                <polygon points="5 3 19 12 5 21 5 3" />
+              </svg>
+              {isRunning ? "Running..." : "Run"}
+            </button>
+            <button
+              className="submit-code-btn"
+              onClick={handleSubmit}
+              disabled={isSubmitting || !problem}
+            >
+              <svg viewBox="0 0 24 24">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              {isSubmitting ? "Submitting..." : "Submit"}
+            </button>
           </div>
           <div className="editor-area">
             <CodeEditor
@@ -470,10 +482,43 @@ export default function ProblemDetailPage() {
                     );
                   })
                 ) : (
-                  <div style={{ color: "var(--text-muted)", fontSize: 13 }}>
-                    {isRunning || isSubmitting
-                      ? "Running..."
-                      : "Run or submit your code to see test results."}
+                  <div
+                    style={{
+                      fontSize: 13,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 12,
+                    }}
+                  >
+                    {isRunning || isSubmitting ? (
+                      <span style={{ color: "var(--text-muted)" }}>
+                        Running...
+                      </span>
+                    ) : rawOutput ? (
+                      <div
+                        className="test-case-result fail"
+                        style={{
+                          whiteSpace: "pre-wrap",
+                          fontFamily: "'JetBrains Mono', monospace",
+                          color: "var(--error)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            fontWeight: 700,
+                            marginBottom: 8,
+                            color: "var(--text-primary)",
+                          }}
+                        >
+                          Execution Failed
+                        </div>
+                        {rawOutput}
+                      </div>
+                    ) : (
+                      <span style={{ color: "var(--text-muted)" }}>
+                        Run or submit your code to see test results.
+                      </span>
+                    )}
                   </div>
                 )
               ) : (

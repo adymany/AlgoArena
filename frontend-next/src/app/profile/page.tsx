@@ -10,7 +10,6 @@ import { ProfileHero } from "@/components/profile/ProfileHero";
 import { StatsGrid } from "@/components/profile/StatsGrid";
 import { ProgressSection } from "@/components/profile/ProgressSection";
 import { ActivityHeatmap } from "@/components/profile/ActivityHeatmap";
-import { BadgesGrid } from "@/components/profile/BadgesGrid";
 import { SubmissionHistory } from "@/components/profile/SubmissionHistory";
 
 interface DiffStat {
@@ -44,13 +43,14 @@ export default function ProfilePage() {
   const [username, setUsername] = useState("");
   const [stats, setStats] = useState<Stats | null>(null);
   const [submissions, setSubmissions] = useState<Submission[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const uid = localStorage.getItem("user_id");
     const uname = localStorage.getItem("username");
     const token = localStorage.getItem("token");
     if (!uid || !token) {
-      router.push("/login");
+      router.replace("/login");
       return;
     }
     setUsername(uname || "User");
@@ -64,7 +64,8 @@ export default function ProfilePage() {
         setStats(s ?? null);
         setSubmissions(Array.isArray(sub) ? sub : []);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setIsLoading(false));
   }, [router]);
 
   const initial = username ? username.charAt(0).toUpperCase() : "?";
@@ -94,47 +95,125 @@ export default function ProfilePage() {
       <Navbar />
 
       <div className="page-body">
-        <ProfileHero username={username} initial={initial} />
-
-        <StatsGrid solved={solved} byDiff={byDiff} />
-
-        <ProgressSection
-          solved={solved}
-          totalProblems={totalProblems}
-          byDiff={byDiff}
-          byDiffTotal={byDiffTotal}
-        />
-
-        <ActivityHeatmap stats={stats} />
-
-        <BadgesGrid
-          solved={solved}
-          byDiff={byDiff}
-          totalProblems={totalProblems}
-        />
-
-        <div className="fade-in-up" style={{ animationDelay: "0.5s" }}>
-          <h3 className="section-title">
-            <svg viewBox="0 0 24 24">
-              <circle cx="12" cy="12" r="3" />
-              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-            </svg>
-            Settings
-          </h3>
-          <div className="settings-section stagger">
-            <div className="settings-row">
-              <div className="settings-info">
-                <h4>Theme</h4>
-                <p>
-                  Choose your preferred editor theme. Applied across all pages.
-                </p>
+        {isLoading ? (
+          <div className="page-skeleton fade-in">
+            {/* Hero skeleton */}
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 20,
+                marginBottom: 32,
+              }}
+            >
+              <div
+                className="skeleton"
+                style={{ width: 72, height: 72, borderRadius: "50%" }}
+              />
+              <div style={{ flex: 1 }}>
+                <div
+                  className="skeleton skeleton-text"
+                  style={{ width: 200, height: 22, marginBottom: 8 }}
+                />
+                <div className="skeleton skeleton-text xs" />
               </div>
             </div>
-            <ThemePicker />
+            {/* Stats skeleton */}
+            <div className="skeleton-stats-row">
+              {[1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className="skeleton skeleton-card"
+                  style={{ minHeight: 80 }}
+                />
+              ))}
+            </div>
+            {/* Progress skeleton */}
+            <div
+              className="skeleton skeleton-card"
+              style={{ minHeight: 120, marginBottom: 20 }}
+            />
+            {/* Heatmap skeleton */}
+            <div
+              className="skeleton skeleton-card"
+              style={{ minHeight: 160, marginBottom: 20 }}
+            />
+            {/* Submissions skeleton */}
+            <div
+              className="skeleton skeleton-card"
+              style={{ minHeight: 100 }}
+            />
           </div>
-        </div>
+        ) : (
+          <>
+            <ProfileHero username={username} initial={initial} />
 
-        <SubmissionHistory submissions={submissions} />
+            <StatsGrid solved={solved} byDiff={byDiff} />
+
+            <ProgressSection
+              solved={solved}
+              totalProblems={totalProblems}
+              byDiff={byDiff}
+              byDiffTotal={byDiffTotal}
+            />
+
+            <ActivityHeatmap stats={stats} />
+
+            <div className="fade-in-up" style={{ animationDelay: "0.3s" }}>
+              <h3 className="section-title">
+                <svg viewBox="0 0 24 24">
+                  <circle cx="12" cy="8" r="7" />
+                  <polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88" />
+                </svg>
+                Achievements
+              </h3>
+              <a
+                href="/leaderboard"
+                onClick={(e) => {
+                  e.preventDefault();
+                  router.push("/leaderboard");
+                }}
+                className="stat-card"
+                style={{
+                  cursor: "pointer",
+                  textDecoration: "none",
+                  display: "block",
+                  textAlign: "center",
+                  padding: 24,
+                }}
+              >
+                <div className="stat-value accent">{solved}</div>
+                <div className="stat-label">
+                  problems solved — view all achievements →
+                </div>
+              </a>
+            </div>
+
+            <div className="fade-in-up" style={{ animationDelay: "0.5s" }}>
+              <h3 className="section-title">
+                <svg viewBox="0 0 24 24">
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                </svg>
+                Settings
+              </h3>
+              <div className="settings-section stagger">
+                <div className="settings-row">
+                  <div className="settings-info">
+                    <h4>Theme</h4>
+                    <p>
+                      Choose your preferred editor theme. Applied across all
+                      pages.
+                    </p>
+                  </div>
+                </div>
+                <ThemePicker />
+              </div>
+            </div>
+
+            <SubmissionHistory submissions={submissions} />
+          </>
+        )}
       </div>
     </>
   );

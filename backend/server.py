@@ -4,12 +4,14 @@ import docker
 import tarfile
 import io
 import os
+import re
 import threading
 import psycopg2
 import time
 import json
 import shutil
 import datetime as dt
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from dotenv import load_dotenv
@@ -17,7 +19,6 @@ import redis
 import jwt as pyjwt
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-from rq import Queue
 
 # Load environment variables
 load_dotenv()
@@ -26,13 +27,22 @@ load_dotenv()
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROBLEMS_DIR = os.path.join(BASE_DIR, "problems")
 
+DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+
 app = Flask(__name__)
-CORS(app) 
+CORS(app, origins=[
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    f"http://{os.getenv('FRONTEND_HOST', 'localhost')}:3000",
+])
 
 client = docker.from_env()
 
 # --- JWT Config ---
-JWT_SECRET = os.getenv("JWT_SECRET", "algoarena-super-secret-key-change-me")
+JWT_SECRET = os.getenv("JWT_SECRET")
+if not JWT_SECRET:
+    print("WARNING: JWT_SECRET not set in .env — using insecure default for development only.")
+    JWT_SECRET = "algoarena-dev-secret-key-not-for-production"
 JWT_EXPIRY_HOURS = int(os.getenv("JWT_EXPIRY_HOURS", "24"))
 
 # --- Redis Connection ---
@@ -50,12 +60,7 @@ try:
 except redis.ConnectionError:
     print("WARNING: Redis connection failed. Caching/rate-limiting will be unavailable.")
 
-# --- RQ Task Queue ---
-task_queue = Queue(connection=redis.Redis(
-    host=os.getenv("REDIS_HOST", "localhost"),
-    port=int(os.getenv("REDIS_PORT", "6379")),
-    db=1
-))
+
 
 # --- Rate Limiter ---
 limiter = Limiter(
@@ -66,6 +71,9 @@ limiter = Limiter(
 )
 
 # Database Connection
+class DatabaseUnavailableError(Exception):
+    pass
+
 def get_db_connection():
     try:
         conn = psycopg2.connect(
@@ -78,15 +86,19 @@ def get_db_connection():
         return conn
     except Exception as e:
         print("Database connection failed:", e)
-        return None
+        raise DatabaseUnavailableError("Database is currently unavailable")
+
+@app.errorhandler(DatabaseUnavailableError)
+def handle_db_unavailable(e):
+    return jsonify({"error": "Database is currently unavailable. Please try again later."}), 503
 
 # Helper to log and execute queries
 def execute_query(cur, query, params=None):
+    if DEBUG:
+        print(f"\n[SQL QUERY]: {query[:120]}..." if len(query) > 120 else f"\n[SQL QUERY]: {query}")
     if params:
-        print(f"\n[SQL QUERY]: {query} | Params: {params}")
         cur.execute(query, params)
     else:
-        print(f"\n[SQL QUERY]: {query}")
         cur.execute(query)
 
 # --- JWT Helpers ---
@@ -96,8 +108,8 @@ def generate_token(user_id, username, is_admin=False):
         "user_id": user_id,
         "username": username,
         "is_admin": is_admin,
-        "exp": dt.datetime.utcnow() + dt.timedelta(hours=JWT_EXPIRY_HOURS),
-        "iat": dt.datetime.utcnow()
+        "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_EXPIRY_HOURS),
+        "iat": datetime.now(timezone.utc)
     }
     token = pyjwt.encode(payload, JWT_SECRET, algorithm="HS256")
     # Store in Redis with TTL for server-side validation & revocation
@@ -225,7 +237,7 @@ def admin_stats():
     if cached:
         return jsonify(cached)
     
-    from datetime import datetime, timedelta
+
     conn = get_db_connection()
     try:
         cur = conn.cursor()
@@ -352,10 +364,11 @@ def admin_database():
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        tables = ["users", "problems", "submissions", "chat_sessions"]
+        ALLOWED_TABLES = {"users", "problems", "submissions", "chat_sessions"}
+        tables = [t for t in ["users", "problems", "submissions", "chat_sessions"] if t in ALLOWED_TABLES]
         table_stats = []
         for table in tables:
-            execute_query(cur, f"SELECT COUNT(*) FROM {table}")
+            cur.execute(f"SELECT COUNT(*) FROM {table}")  # safe: table is from hardcoded whitelist
             count = cur.fetchone()[0]
             # Get estimated size using pg_relation_size
             execute_query(cur, f"SELECT pg_size_pretty(pg_total_relation_size('{table}'))")
@@ -389,6 +402,8 @@ def update_user_status(user_id):
         cur = conn.cursor()
         execute_query(cur, "UPDATE users SET is_admin = %s WHERE id = %s", (is_admin, user_id))
         conn.commit()
+        # Invalidate the target user's JWT so they re-auth with updated is_admin
+        redis_client.delete(f"token:{user_id}")
         return jsonify({"message": "User updated successfully"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -661,9 +676,12 @@ def init_db():
                     # Ensure existing admin user has is_admin flag
                     execute_query(cur, "UPDATE users SET is_admin = TRUE WHERE username = %s", ("admin",))
                 
-                # Also grant admin to specific users
-                for admin_user in ["23se02cs093@ppsu.ac.in"]:
-                    execute_query(cur, "UPDATE users SET is_admin = TRUE WHERE username = %s", (admin_user,))
+                # Also grant admin to specific users from env
+                extra_admins = os.getenv("ADMIN_USERS", "").split(",")
+                for admin_user in extra_admins:
+                    admin_user = admin_user.strip()
+                    if admin_user:
+                        execute_query(cur, "UPDATE users SET is_admin = TRUE WHERE username = %s", (admin_user,))
                 
                 conn.commit()
                 
@@ -823,15 +841,12 @@ F(n) = F(n - 1) + F(n - 2), for n > 1.
     
     print("\n--- SEEDING PROBLEMS ---")
     for p in problems:
-        # Check if exists first to potentially update it
         slug = p[0]
         execute_query(cur, "SELECT id FROM problems WHERE slug = %s", (slug,))
         exists = cur.fetchone()
         
         if exists:
-            # Update description AND templates if it exists
-            print(f"Updating content for: {slug}")
-            execute_query(cur, "UPDATE problems SET title = %s, description = %s, difficulty = %s, templates = %s WHERE slug = %s", (p[1], p[2], p[3], p[4], slug))
+            print(f"Problem already exists, skipping: {slug}")
         else:
             print(f"Creating new problem: {slug}")
             execute_query(cur, "INSERT INTO problems (slug, title, description, difficulty, templates) VALUES (%s, %s, %s, %s, %s)", p)
@@ -844,7 +859,15 @@ init_db()
 @app.route("/api/v1/check-admin", methods=["GET"])
 @require_auth
 def check_admin():
-    return jsonify({"is_admin": g.is_admin}), 200
+    # Read is_admin from the database (not JWT) so it reflects live changes
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        execute_query(cur, "SELECT COALESCE(is_admin, FALSE) FROM users WHERE id = %s", (g.user_id,))
+        row = cur.fetchone()
+        return jsonify({"is_admin": bool(row[0]) if row else False}), 200
+    finally:
+        conn.close()
 
 @app.route("/api/v1/logout", methods=["POST"])
 @require_auth
@@ -876,12 +899,18 @@ def set_admin():
 @limiter.limit("3/minute")
 def register():
     data = request.json
-    username = data.get("username")
-    password = data.get("password")
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
     
     if not username or not password:
         return jsonify({"error": "Username and password required"}), 400
-        
+
+    if not re.match(r'^[a-zA-Z0-9_@.\-]{3,50}$', username):
+        return jsonify({"error": "Username must be 3-50 characters and contain only letters, numbers, _, @, . or -"}), 400
+
+    if len(password) < 6:
+        return jsonify({"error": "Password must be at least 6 characters"}), 400
+
     hashed = generate_password_hash(password)
     
     conn = get_db_connection()
@@ -946,10 +975,206 @@ def get_problems():
     conn = get_db_connection()
     try:
         cur = conn.cursor()
-        execute_query(cur, "SELECT slug, title, difficulty FROM problems ORDER BY id ASC")
-        problems = [{"slug": row[0], "title": row[1], "difficulty": row[2]} for row in cur.fetchall()]
+        execute_query(cur, """
+            SELECT p.slug, p.title, p.difficulty,
+                   COUNT(s.id) AS total_subs,
+                   COUNT(CASE WHEN s.status = 'Pass' THEN 1 END) AS pass_count
+            FROM problems p
+            LEFT JOIN submissions s ON p.slug = s.problem_id
+            GROUP BY p.id, p.slug, p.title, p.difficulty
+            ORDER BY p.id ASC
+        """)
+        problems = []
+        for row in cur.fetchall():
+            total = row[3] or 0
+            passed = row[4] or 0
+            acceptance = round((passed / total) * 100) if total > 0 else 0
+            problems.append({
+                "slug": row[0],
+                "title": row[1],
+                "difficulty": row[2],
+                "acceptance": acceptance,
+                "total_submissions": total
+            })
         cache_set("problems:list", problems, ttl=300)
         return jsonify(problems)
+    finally:
+        conn.close()
+
+
+# --- Leaderboard Endpoint ---
+@app.route("/api/v1/leaderboard", methods=["GET"])
+def get_leaderboard():
+    cached = cache_get("leaderboard")
+    if cached:
+        return jsonify(cached)
+
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+
+        # Get total problems count first
+        execute_query(cur, "SELECT COUNT(*) FROM problems")
+        total_problems = cur.fetchone()[0]
+
+        execute_query(cur, """
+            SELECT 
+                u.id,
+                u.username,
+                COUNT(DISTINCT CASE WHEN s.status = 'Pass' THEN s.problem_id END) AS solved,
+                COUNT(s.id) AS total_submissions,
+                COUNT(CASE WHEN s.status = 'Pass' THEN 1 END) AS pass_count,
+                MAX(s.created_at) AS last_active
+            FROM users u
+            LEFT JOIN submissions s ON u.id = s.user_id
+            GROUP BY u.id, u.username
+            ORDER BY solved DESC, pass_count DESC, total_submissions ASC
+            LIMIT 100
+        """)
+
+        leaderboard = []
+        rank = 0
+        for row in cur.fetchall():
+            rank += 1
+            total_subs = row[3] or 0
+            pass_ct = row[4] or 0
+            pass_rate = round((pass_ct / total_subs) * 100) if total_subs > 0 else 0
+            leaderboard.append({
+                "rank": rank,
+                "user_id": row[0],
+                "username": row[1],
+                "solved": row[2] or 0,
+                "total_submissions": total_subs,
+                "pass_rate": pass_rate,
+                "last_active": str(row[5]) if row[5] else None,
+            })
+
+        cache_set("leaderboard", leaderboard, ttl=120)
+        return jsonify(leaderboard)
+    finally:
+        conn.close()
+
+
+# --- Achievements Endpoint ---
+ACHIEVEMENT_DEFS = [
+    {"id": "first_steps", "title": "First Steps", "desc": "Solve your first problem", "icon": "flag"},
+    {"id": "on_fire", "title": "On Fire", "desc": "Achieve a 3-day streak", "icon": "flame"},
+    {"id": "big_brain", "title": "Big Brain", "desc": "Solve a hard problem", "icon": "brain"},
+    {"id": "champion", "title": "Champion", "desc": "Solve all problems", "icon": "trophy"},
+    {"id": "centurion", "title": "Centurion", "desc": "Make 100 submissions", "icon": "zap"},
+    {"id": "consistent", "title": "Consistent", "desc": "7-day streak", "icon": "calendar"},
+    {"id": "tenacious", "title": "Tenacious", "desc": "Attempt 5 different problems", "icon": "target"},
+    {"id": "perfectionist", "title": "Perfectionist", "desc": "Achieve 80%+ pass rate (min 10 subs)", "icon": "star"},
+]
+
+@app.route("/api/v1/achievements", methods=["GET"])
+@require_auth
+def get_achievements():
+    user_id = g.user_id
+    cache_key = f"achievements:{user_id}"
+    cached = cache_get(cache_key)
+    if cached:
+        return jsonify(cached)
+
+
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+
+        # Solved count
+        execute_query(cur, """
+            SELECT COUNT(DISTINCT problem_id) FROM submissions
+            WHERE user_id = %s AND status = 'Pass'
+        """, (user_id,))
+        solved = cur.fetchone()[0]
+
+        # Total problems
+        execute_query(cur, "SELECT COUNT(*) FROM problems")
+        total_problems = cur.fetchone()[0]
+
+        # Solved hard
+        execute_query(cur, """
+            SELECT COUNT(DISTINCT s.problem_id) FROM submissions s
+            JOIN problems p ON s.problem_id = p.slug
+            WHERE s.user_id = %s AND s.status = 'Pass' AND p.difficulty = 'Hard'
+        """, (user_id,))
+        solved_hard = cur.fetchone()[0]
+
+        # Total submissions & pass count
+        execute_query(cur, "SELECT COUNT(*) FROM submissions WHERE user_id = %s", (user_id,))
+        total_subs = cur.fetchone()[0]
+        execute_query(cur, "SELECT COUNT(*) FROM submissions WHERE user_id = %s AND status = 'Pass'", (user_id,))
+        pass_count = cur.fetchone()[0]
+        pass_rate = round((pass_count / total_subs) * 100) if total_subs > 0 else 0
+
+        # Attempted distinct problems
+        execute_query(cur, "SELECT COUNT(DISTINCT problem_id) FROM submissions WHERE user_id = %s", (user_id,))
+        attempted = cur.fetchone()[0]
+
+        # Streaks
+        execute_query(cur, """
+            SELECT DATE(created_at) as day, COUNT(*)
+            FROM submissions
+            WHERE user_id = %s AND created_at >= CURRENT_DATE - INTERVAL '364 days'
+            GROUP BY DATE(created_at)
+            ORDER BY day ASC
+        """, (user_id,))
+        activity_map = {str(row[0]): row[1] for row in cur.fetchall()}
+
+        today = datetime.now()
+        current_streak = 0
+        longest_streak = 0
+        streak = 0
+        for i in range(364, -1, -1):
+            day = (today - timedelta(days=i)).strftime('%Y-%m-%d')
+            if activity_map.get(day, 0) > 0:
+                streak += 1
+                longest_streak = max(longest_streak, streak)
+            else:
+                streak = 0
+        for i in range(0, 365):
+            day = (today - timedelta(days=i)).strftime('%Y-%m-%d')
+            if activity_map.get(day, 0) > 0:
+                current_streak += 1
+            else:
+                break
+
+        # Compute earned achievements
+        earned = set()
+        if solved > 0:
+            earned.add("first_steps")
+        if current_streak >= 3 or longest_streak >= 3:
+            earned.add("on_fire")
+        if solved_hard > 0:
+            earned.add("big_brain")
+        if solved >= total_problems and total_problems > 0:
+            earned.add("champion")
+        if total_subs >= 100:
+            earned.add("centurion")
+        if current_streak >= 7 or longest_streak >= 7:
+            earned.add("consistent")
+        if attempted >= 5:
+            earned.add("tenacious")
+        if pass_rate >= 80 and total_subs >= 10:
+            earned.add("perfectionist")
+
+        result = {
+            "achievements": [
+                {**a, "earned": a["id"] in earned}
+                for a in ACHIEVEMENT_DEFS
+            ],
+            "stats": {
+                "solved": solved,
+                "total_problems": total_problems,
+                "total_submissions": total_subs,
+                "pass_rate": pass_rate,
+                "current_streak": current_streak,
+                "longest_streak": longest_streak,
+                "attempted": attempted,
+            }
+        }
+        cache_set(cache_key, result, ttl=120)
+        return jsonify(result)
     finally:
         conn.close()
 
@@ -1019,7 +1244,7 @@ def get_stats():
             by_difficulty[diff] = {"total": total, "solved": solved_in_diff}
 
         # Recent activity - full year (365 days)
-        from datetime import datetime, timedelta
+
         execute_query(cur, """
             SELECT DATE(created_at) as day, COUNT(*) 
             FROM submissions 
@@ -1267,7 +1492,7 @@ def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=No
         worker = threading.Thread(target=run_thread)
         worker.start()
         
-        worker.join(timeout=2)
+        worker.join(timeout=10)
         
         if worker.is_alive():
             res["is_tle"] = True
@@ -1312,6 +1537,11 @@ def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=No
     except Exception as e:
         print("Docker Error:", e)
         redis_client.decr("exec:active")
+        # Always try to clean up the container
+        try:
+            con.remove(force=True)
+        except:
+            pass
         return {"error": str(e)}
 
 @app.route("/api/v1/execute", methods=["POST"])

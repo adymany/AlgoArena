@@ -1,11 +1,4 @@
-import {
-  IconFlag,
-  IconFlame,
-  IconLightning,
-  IconBrain,
-  IconDiamond,
-  IconTrophy,
-} from "@/components/Icons";
+import { IconFlag, IconFlame, IconBrain, IconTrophy } from "@/components/Icons";
 import type { ReactNode } from "react";
 
 const BADGES: {
@@ -27,22 +20,10 @@ const BADGES: {
     color: "var(--diff-medium)",
   },
   {
-    icon: <IconLightning />,
-    title: "Speed Demon",
-    desc: "Solved in under 5 min",
-    color: "var(--accent-primary)",
-  },
-  {
     icon: <IconBrain />,
     title: "Big Brain",
     desc: "Solved a hard problem",
     color: "var(--diff-hard)",
-  },
-  {
-    icon: <IconDiamond />,
-    title: "Perfectionist",
-    desc: "100% on first try",
-    color: "var(--accent-secondary)",
   },
   {
     icon: <IconTrophy />,
@@ -56,9 +37,23 @@ interface BadgesGridProps {
   solved: number;
   byDiff: { easy: number; medium: number; hard: number };
   totalProblems: number;
+  currentStreak?: number;
 }
 
-export function BadgesGrid({ solved, byDiff, totalProblems }: BadgesGridProps) {
+export function BadgesGrid({
+  solved,
+  byDiff,
+  totalProblems,
+  currentStreak = 0,
+}: BadgesGridProps) {
+  const isEarned = (i: number) => {
+    if (i === 0) return solved > 0;
+    if (i === 1) return currentStreak >= 3;
+    if (i === 2) return byDiff.hard > 0;
+    if (i === 3) return solved >= totalProblems && totalProblems > 0;
+    return false;
+  };
+
   return (
     <div className="fade-in-up" style={{ animationDelay: "0.3s" }}>
       <h3 className="section-title">
@@ -70,10 +65,7 @@ export function BadgesGrid({ solved, byDiff, totalProblems }: BadgesGridProps) {
       </h3>
       <div className="badges-grid stagger">
         {BADGES.map((b, i) => {
-          const earned =
-            (i === 0 && solved > 0) ||
-            (i === 3 && byDiff.hard > 0) ||
-            (i === 5 && solved >= totalProblems && totalProblems > 0);
+          const earned = isEarned(i);
           return (
             <div
               key={i}
