@@ -37,7 +37,7 @@ interface AchievementsData {
   };
 }
 
-const ICON_MAP: Record<string, JSX.Element> = {
+const ICON_MAP: Record<string, React.ReactNode> = {
   flag: (
     <svg viewBox="0 0 24 24">
       <path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z" />
