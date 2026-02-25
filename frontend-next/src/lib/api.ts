@@ -1,18 +1,21 @@
 /**
  * Returns the base URL for the backend API.
  *
- * In development on the same machine, this resolves to http://localhost:9000.
- * When accessed from another device (e.g. mobile phone on the same network),
- * it dynamically uses the hostname from the browser's URL bar + port 9000,
- * so the API calls reach the correct machine.
+ * In production (Vercel), returns "" so calls are relative (e.g. /api/v1/...)
+ * and go through Next.js rewrites which proxy to the EC2 backend.
  *
- * You can override this by setting NEXT_PUBLIC_API_URL in .env.local.
+ * In development, uses localhost:9000 or the current hostname:9000.
  */
 export function getApiBase(): string {
-  if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL;
+  // In production, use relative URLs (Vercel rewrites handle proxying)
+  if (
+    typeof window !== "undefined" &&
+    window.location.hostname !== "localhost" &&
+    window.location.hostname !== "127.0.0.1"
+  ) {
+    return "";
   }
-  // Use the same hostname the browser is currently on, but target port 9000
+  // Development: use the same hostname the browser is on, but target port 9000
   if (typeof window !== "undefined") {
     return `http://${window.location.hostname}:9000`;
   }
@@ -31,8 +34,13 @@ export function getToken(): string | null {
 /**
  * Build headers with Authorization if a token exists.
  */
-export function authHeaders(extra?: Record<string, string>): Record<string, string> {
-  const headers: Record<string, string> = { "Content-Type": "application/json", ...extra };
+export function authHeaders(
+  extra?: Record<string, string>,
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...extra,
+  };
   const token = getToken();
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
