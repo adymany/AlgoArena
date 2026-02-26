@@ -5356,3 +5356,45 @@ pre,
   max-width: 1200px;
   margin: 0 auto;
 }
+
+/* ============================================================
+   Mobile Optimization
+   ============================================================ */
+@media (max-width: 768px) {
+  /* IDE Layout: Stack panels vertically on mobile */
+  .ide-layout .panels {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .ide-layout .panel-left,
+  .ide-layout .panel-center,
+  .ide-layout .panel-right {
+    width: 100% !important;
+    min-height: 500px;
+    flex: 0 0 auto;
+    border-bottom: 2px solid var(--border-color);
+  }
+
+  .resize-handle-h {
+    display: none !important;
+  }
+
+  /* Toolbar fixes for small screens */
+  .editor-toolbar {
+    flex-wrap: wrap;
+    height: auto;
+    padding: 8px 16px;
+    gap: 8px;
+  }
+
+  .lang-select {
+    flex: 1;
+    min-width: 100px;
+  }
+
+  /* Make the code editor slightly taller by default on mobile so it's easier to tap inside */
+  .editor-area {
+    min-height: 300px;
+  }
+}
