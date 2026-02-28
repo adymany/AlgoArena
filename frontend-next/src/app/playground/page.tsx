@@ -100,8 +100,15 @@ export default function PlaygroundPage() {
       const data = await res.json();
 
       if (data.output) {
-        // Remove \r to prevent missing glyph boxes from rendering in the specific TTY output
-        const cleanOutput = data.output.replace(/\r/g, "");
+        // Strip all TTY control characters:
+        // 1. ANSI escape sequences (colors, cursor moves, etc.)
+        // 2. Carriage returns
+        // 3. Any remaining non-printable chars (except newline \n and tab \t)
+        const cleanOutput = data.output
+          .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "") // ANSI escape sequences
+          .replace(/\x1b\].*?(\x07|\x1b\\)/g, "") // OSC sequences
+          .replace(/\r/g, "") // carriage returns
+          .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, ""); // other control chars
         setOutput((prev) => prev + cleanOutput);
       }
 
