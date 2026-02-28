@@ -1544,6 +1544,31 @@ def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=No
             con.remove(force=True)
         except:
             pass
+        return {"error": str(e)}
+
+@app.route("/api/v1/execute", methods=["POST"])
+@require_auth
+@limiter.limit("10/minute")
+def run_code():
+    data = request.json
+    lang = data["language"]
+    user_code = data["code"]
+    pid = data.get("problem_id", "")
+    user_id = g.user_id
+    
+    # Optional ad-hoc driver/test data
+    adhoc_driver = data.get("driver_code")
+    adhoc_test_data = data.get("test_data")
+    
+    print(f"Execution request: Lang={lang}, Problem={pid}, User={user_id}")
+
+    result = execute_code_in_docker(lang, user_code, pid, user_id, adhoc_driver, adhoc_test_data)
+    
+    if "error" in result:
+        return jsonify(result), 500 if "error" in result else 200
+        
+    return jsonify(result)
+
 # --- PLAYGROUND INTERACTIVE ENDPOINTS ---
 
 active_playground_sessions = {}
