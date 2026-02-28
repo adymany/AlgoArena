@@ -1544,6 +1544,113 @@ def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=No
             pass
         return {"error": str(e)}
 
+# Helper: Execute code for Playground (with stdin and 60s timeout)
+def execute_playground_in_docker(lang, code, stdin_data):
+    # Track execution in Redis
+    redis_client.incr("exec:active")
+    redis_client.incr("exec:total")
+    start_time = time.time()
+    
+    cmd = ""
+    if lang == "python":
+        fname = "solution.py"
+        cmd = "python3 solution.py < input.txt"
+    elif lang == "cpp":
+        fname = "solution.cpp"
+        cmd = "g++ -o solution solution.cpp && ./solution < input.txt"
+    elif lang == "c":
+        fname = "solution.c"
+        cmd = "gcc -o solution solution.c && ./solution < input.txt"
+    else:
+        return {"error": "bad language"}, 400
+
+    my_config = {
+        "image": "judger:latest",
+        "command": ["/bin/bash", "-c", "sleep 600"],
+        "mem_limit": "256m",
+        "network_mode": "none",
+        "detach": True
+    }
+
+    try:
+        con = client.containers.create(**my_config)
+        con.start()
+        
+        stream = io.BytesIO()
+        t = tarfile.open(fileobj=stream, mode='w')
+        
+        b_code = code.encode('utf-8')
+        info = tarfile.TarInfo(name=fname)
+        info.size = len(b_code)
+        t.addfile(info, io.BytesIO(b_code))
+        
+        b_input = stdin_data.encode('utf-8') if stdin_data else b""
+        info_in = tarfile.TarInfo(name="input.txt")
+        info_in.size = len(b_input)
+        t.addfile(info_in, io.BytesIO(b_input))
+        
+        t.close()
+        stream.seek(0)
+        con.put_archive("/home/sandbox", stream)
+       
+        res = {"code": None, "msg": "", "is_tle": False}
+        
+        def run_thread():
+            try:
+                escaped_cmd = cmd.replace("'", "'\\''")
+                c, out = con.exec_run(
+                    cmd=f"/bin/bash -c '{escaped_cmd}'",
+                    workdir="/home/sandbox"
+                )
+                res["code"] = c
+                res["msg"] = out
+            except:
+                print("exec run failed")
+
+        worker = threading.Thread(target=run_thread)
+        worker.start()
+        
+        worker.join(timeout=60) # 60 seconds timeout
+        
+        if worker.is_alive():
+            res["is_tle"] = True
+            try:
+                con.kill() 
+            except:
+                pass
+            worker.join()
+            con.remove(force=True)
+            redis_client.decr("exec:active")
+            return {
+                "status": "TLE", 
+                "output": "Time Limit Exceeded (60 seconds)", 
+                "exit_code": 124,
+                "execution_time": 60.0
+            }
+            
+        con.remove(force=True)
+        
+        execution_output = res["msg"].decode('utf-8') if res["msg"] else ""
+        
+        elapsed = time.time() - start_time
+        redis_client.decr("exec:active")
+        
+        return {
+            "status": "Success" if res["code"] == 0 else "Error",
+            "output": execution_output,
+            "exit_code": res["code"],
+            "execution_time": round(elapsed, 3)
+        }
+
+    except Exception as e:
+        print("Docker Error:", e)
+        redis_client.decr("exec:active")
+        try:
+            con.remove(force=True)
+        except:
+            pass
+        return {"error": str(e)}
+
 @app.route("/api/v1/execute", methods=["POST"])
 @require_auth
 @limiter.limit("10/minute")
@@ -1564,6 +1671,25 @@ def run_code():
     
     if "error" in result:
         return jsonify(result), 500 if "error" in result else 200
+        
+    return jsonify(result)
+
+@app.route("/api/v1/playground/execute", methods=["POST"])
+@require_auth
+@limiter.limit("10/minute")
+def run_playground():
+    data = request.json
+    lang = data.get("language")
+    code = data.get("code")
+    stdin = data.get("stdin", "")
+    
+    if not code or not lang:
+        return jsonify({"error": "Missing language or code"}), 400
+
+    result = execute_playground_in_docker(lang, code, stdin)
+    
+    if "error" in result:
+        return jsonify(result), 500
         
     return jsonify(result)
 

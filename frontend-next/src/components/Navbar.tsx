@@ -80,6 +80,16 @@ export default function Navbar() {
           Problems
         </Link>
         <Link
+          href="/playground"
+          className={`nav-link${pathname === "/playground" ? " active" : ""}`}
+        >
+          <svg viewBox="0 0 24 24">
+            <polyline points="16 18 22 12 16 6" />
+            <polyline points="8 6 2 12 8 18" />
+          </svg>
+          Playground
+        </Link>
+        <Link
           href="/leaderboard"
           className={`nav-link${pathname === "/leaderboard" ? " active" : ""}`}
         >
