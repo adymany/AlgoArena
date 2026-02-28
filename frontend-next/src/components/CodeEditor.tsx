@@ -1,14 +1,11 @@
 "use client";
 
-import Editor, { loader, type Monaco } from "@monaco-editor/react";
+import Editor, { type Monaco } from "@monaco-editor/react";
 import { useEffect, useState, useRef } from "react";
 
-// Configure Monaco to load workers from CDN (fixes Next.js Webpack worker bundling issues)
-loader.config({
-  paths: {
-    vs: "https://cdn.jsdelivr.net/npm/monaco-editor@0.55.0/min/vs",
-  },
-});
+// Monaco is automatically loaded via CDN by @monaco-editor/react.
+// Relying on the default internal loader resolves Next.js Webpack stuck-on-loading issues
+// and ensures the version strictly matches the wrapper.
 
 /* ── Monaco theme definitions keyed by app theme id ── */
 const MONACO_THEMES: Record<
