@@ -1549,8 +1549,8 @@ def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=No
 active_playground_sessions = {}
 
 def playground_timeout_killer(con, sid):
-    # Enforces the 60 second timeout limit
-    time.sleep(60.0)
+    # Enforces a 10 minute timeout limit for playground sessions
+    time.sleep(600.0)
     if sid in active_playground_sessions:
         active_playground_sessions[sid]["is_tle"] = True
         try:
@@ -1678,7 +1678,7 @@ def playground_poll(sid):
         
     if s["is_tle"]:
         running = False
-        output += "\n\nError: Time Limit Exceeded (60 seconds)."
+        output += "\n\nError: Time Limit Exceeded (10 minutes)."
         exit_code = 124
         
     if not running:

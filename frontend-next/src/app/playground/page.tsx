@@ -100,7 +100,9 @@ export default function PlaygroundPage() {
       const data = await res.json();
 
       if (data.output) {
-        setOutput((prev) => prev + data.output);
+        // Remove \r to prevent missing glyph boxes from rendering in the specific TTY output
+        const cleanOutput = data.output.replace(/\r/g, "");
+        setOutput((prev) => prev + cleanOutput);
       }
 
       if (data.running) {
