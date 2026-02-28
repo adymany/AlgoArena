@@ -11,22 +11,19 @@ const CodeEditor = dynamic(() => import("@/components/CodeEditor"), {
 
 export default function PlaygroundPage() {
   const [language, setLanguage] = useState("python");
-  const [code, setCode] = useState(
-    '# Write your code here...\n\nprint("Hello, World!")',
-  );
-  const [stdin, setStdin] = useState("");
+  const [code, setCode] = useState("");
   const [output, setOutput] = useState("");
   const [isRunning, setIsRunning] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [terminalInput, setTerminalInput] = useState("");
 
   const [leftWidth, setLeftWidth] = useState(50);
-  const [bottomHeight, setBottomHeight] = useState(250);
-
   const hResizing = useRef(false);
-  const vResizing = useRef(false);
   const hStartX = useRef(0);
   const hStartW = useRef(0);
-  const vStartY = useRef(0);
-  const vStartH = useRef(0);
+
+  const terminalEndRef = useRef<HTMLDivElement>(null);
+  const terminalInputRef = useRef<HTMLInputElement>(null);
 
   // Preserve user code locally
   useEffect(() => {
@@ -35,14 +32,16 @@ export default function PlaygroundPage() {
       setCode(savedCode);
     } else {
       if (language === "python")
-        setCode('# Write your code here...\n\nprint("Hello, World!")');
+        setCode(
+          '# Write your code here...\ni = input("Enter value: ")\nprint("You said:", i)',
+        );
       if (language === "cpp")
         setCode(
-          '#include <iostream>\nusing namespace std;\n\nint main() {\n    cout << "Hello, World!\\n";\n    return 0;\n}',
+          '#include <iostream>\nusing namespace std;\n\nint main() {\n    string s;\n    cout << "Enter value: ";\n    cin >> s;\n    cout << "You said: " << s << "\\n";\n    return 0;\n}',
         );
       if (language === "c")
         setCode(
-          '#include <stdio.h>\n\nint main() {\n    printf("Hello, World!\\n");\n    return 0;\n}',
+          '#include <stdio.h>\n\nint main() {\n    char s[100];\n    printf("Enter value: ");\n    scanf("%s", s);\n    printf("You said: %s\\n", s);\n    return 0;\n}',
         );
     }
   }, [language]);
@@ -63,16 +62,6 @@ export default function PlaygroundPage() {
     [leftWidth],
   );
 
-  const onVResizeMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      vResizing.current = true;
-      vStartY.current = e.clientY;
-      vStartH.current = bottomHeight;
-      e.preventDefault();
-    },
-    [bottomHeight],
-  );
-
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (hResizing.current) {
@@ -83,19 +72,9 @@ export default function PlaygroundPage() {
           Math.max(20, Math.min(80, hStartW.current + dx * pctPerPx)),
         );
       }
-      if (vResizing.current) {
-        const diff = vStartY.current - e.clientY;
-        setBottomHeight(
-          Math.max(
-            100,
-            Math.min(window.innerHeight - 200, vStartH.current + diff),
-          ),
-        );
-      }
     };
     const onUp = () => {
       hResizing.current = false;
-      vResizing.current = false;
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
@@ -105,42 +84,96 @@ export default function PlaygroundPage() {
     };
   }, []);
 
+  // Auto-scroll terminal to bottom
+  useEffect(() => {
+    if (terminalEndRef.current) {
+      terminalEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [output, isRunning]);
+
+  const pollTerminal = async (sid: string) => {
+    try {
+      const res = await fetch(`${getApiBase()}/api/v1/playground/poll/${sid}`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) throw new Error("poll failed");
+      const data = await res.json();
+
+      if (data.output) {
+        setOutput((prev) => prev + data.output);
+      }
+
+      if (data.running) {
+        setTimeout(() => pollTerminal(sid), 200);
+      } else {
+        setIsRunning(false);
+        setSessionId(null);
+        if (data.execution_time !== undefined) {
+          setOutput(
+            (prev) =>
+              prev +
+              `\n\n--- Process exited with code ${data.exit_code} in ${data.execution_time}s ---`,
+          );
+        }
+      }
+    } catch (e: any) {
+      setIsRunning(false);
+      setSessionId(null);
+      setOutput(
+        (prev) => prev + "\n[Terminal connection lost or ended unexpectedly]",
+      );
+    }
+  };
+
   const handleRun = async () => {
     setIsRunning(true);
     setOutput("Running...\n");
+    setSessionId(null);
+    setTerminalInput("");
+
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/playground/execute`, {
+      const res = await fetch(`${getApiBase()}/api/v1/playground/start`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
           language,
           code,
-          stdin,
         }),
       });
       if (!res.ok) {
-        throw new Error("Execution failed. Please check your connection.");
+        throw new Error("Execution failed to start.");
       }
       const data = await res.json();
+      const sid = data.session_id;
+      setSessionId(sid);
 
-      let outText = "";
-      if (data.status === "TLE") {
-        outText = "Execution Time Limit Exceeded (60s)\n";
-      } else if (data.status === "Error") {
-        outText = "Runtime Error:\n" + (data.output || data.error || "");
-      } else {
-        outText = data.output || "";
-      }
+      // Focus the terminal input box immediately
+      setTimeout(() => terminalInputRef.current?.focus(), 100);
 
-      if (data.execution_time) {
-        outText += `\n\n--- Execution Time: ${data.execution_time}s ---`;
-      }
-
-      setOutput(outText);
+      // Start polling
+      pollTerminal(sid);
     } catch (err: any) {
-      setOutput(err.message || "An error occurred during execution.");
-    } finally {
+      setOutput(err.message || "An error occurred starting the execution.");
       setIsRunning(false);
+    }
+  };
+
+  const handleTerminalInputKeyDown = async (
+    e: React.KeyboardEvent<HTMLInputElement>,
+  ) => {
+    if (e.key === "Enter" && sessionId) {
+      const val = terminalInput;
+      setTerminalInput(""); // Reset input box
+
+      try {
+        await fetch(`${getApiBase()}/api/v1/playground/input/${sessionId}`, {
+          method: "POST",
+          headers: authHeaders(),
+          body: JSON.stringify({ input: val }),
+        });
+      } catch (e) {
+        console.error("Failed to send input", e);
+      }
     }
   };
 
@@ -193,7 +226,7 @@ export default function PlaygroundPage() {
 
         <div className="resize-handle-h" onMouseDown={onHResizeMouseDown} />
 
-        {/* Right Panel: I/O */}
+        {/* Right Panel: Terminal */}
         <div
           className="panel panel-right"
           style={{
@@ -202,75 +235,63 @@ export default function PlaygroundPage() {
             flexDirection: "column",
           }}
         >
-          {/* Top of Right Panel: STDIN */}
           <div className="panel-header">
             <div className="panel-tabs">
-              <span className="panel-tab active">Input (stdin)</span>
+              <span className="panel-tab active">Terminal</span>
             </div>
           </div>
           <div
             className="panel-content"
-            style={{ padding: 0, display: "flex" }}
-          >
-            <textarea
-              value={stdin}
-              onChange={(e) => setStdin(e.target.value)}
-              placeholder="Enter terminal input here..."
-              style={{
-                width: "100%",
-                height: "100%",
-                background: "var(--code-bg)",
-                color: "var(--text-primary)",
-                border: "none",
-                padding: "16px",
-                fontFamily: '"JetBrains Mono", monospace',
-                fontSize: "14px",
-                resize: "none",
-                outline: "none",
-              }}
-            />
-          </div>
-
-          <div className="resize-handle-v" onMouseDown={onVResizeMouseDown} />
-
-          {/* Bottom of Right Panel: STDOUT */}
-          <div
-            className="bottom-panel"
             style={{
-              height: bottomHeight,
-              flexShrink: 0,
-              display: "flex",
-              flexDirection: "column",
+              padding: "16px",
+              background: "var(--code-bg)",
+              overflowY: "auto",
+              flex: 1,
+              fontFamily: '"JetBrains Mono", monospace',
+              fontSize: "14px",
+              color: "var(--text-primary)",
+              cursor: "text",
             }}
+            onClick={() => isRunning && terminalInputRef.current?.focus()}
           >
-            <div className="panel-header">
-              <div className="panel-tabs">
-                <span className="panel-tab active">Output (stdout)</span>
-              </div>
-            </div>
-            <div
-              className="panel-content"
+            <pre
               style={{
-                padding: 0,
-                background: "var(--code-bg)",
-                overflowY: "auto",
-                flex: 1,
+                margin: 0,
+                color: "inherit",
+                fontFamily: "inherit",
+                fontSize: "inherit",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
               }}
             >
-              <pre
-                style={{
-                  margin: 0,
-                  padding: "16px",
-                  color: "var(--text-primary)",
-                  fontFamily: '"JetBrains Mono", monospace',
-                  fontSize: "14px",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-all",
-                }}
-              >
-                {output || "Output will appear here..."}
-              </pre>
-            </div>
+              {output || "Output will appear here..."}
+            </pre>
+
+            {isRunning && (
+              <div style={{ display: "flex", marginTop: "2px" }}>
+                <input
+                  ref={terminalInputRef}
+                  type="text"
+                  value={terminalInput}
+                  onChange={(e) => setTerminalInput(e.target.value)}
+                  onKeyDown={handleTerminalInputKeyDown}
+                  autoComplete="off"
+                  spellCheck="false"
+                  style={{
+                    background: "transparent",
+                    color: "var(--text-primary)",
+                    border: "none",
+                    outline: "none",
+                    fontFamily: '"JetBrains Mono", monospace',
+                    fontSize: "14px",
+                    flex: 1,
+                    padding: 0,
+                    margin: 0,
+                  }}
+                />
+              </div>
+            )}
+            <div ref={terminalEndRef} />
           </div>
         </div>
       </div>

@@ -19,6 +19,8 @@ import redis
 import jwt as pyjwt
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+import uuid
+import select
 
 # Load environment variables
 load_dotenv()
@@ -1542,156 +1544,179 @@ def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=No
             con.remove(force=True)
         except:
             pass
-        return {"error": str(e)}
+# --- PLAYGROUND INTERACTIVE ENDPOINTS ---
 
-# Helper: Execute code for Playground (with stdin and 60s timeout)
-def execute_playground_in_docker(lang, code, stdin_data):
-    # Track execution in Redis
-    redis_client.incr("exec:active")
-    redis_client.incr("exec:total")
-    start_time = time.time()
+active_playground_sessions = {}
+
+def playground_timeout_killer(con, sid):
+    # Enforces the 60 second timeout limit
+    time.sleep(60.0)
+    if sid in active_playground_sessions:
+        active_playground_sessions[sid]["is_tle"] = True
+        try:
+            con.remove(force=True)
+        except Exception:
+            pass
+
+@app.route("/api/v1/playground/start", methods=["POST"])
+@require_auth
+@limiter.limit("10/minute")
+def playground_start():
+    data = request.json
+    lang = data.get("language")
+    code = data.get("code")
     
+    if not code or not lang:
+        return jsonify({"error": "Missing language or code"}), 400
+
     cmd = ""
+    fname = "solution.py"
     if lang == "python":
         fname = "solution.py"
-        cmd = "python3 solution.py < input.txt"
+        cmd = "python3 -u solution.py"
     elif lang == "cpp":
         fname = "solution.cpp"
-        cmd = "g++ -o solution solution.cpp && ./solution < input.txt"
+        cmd = "g++ -o solution solution.cpp && ./solution"
     elif lang == "c":
         fname = "solution.c"
-        cmd = "gcc -o solution solution.c && ./solution < input.txt"
+        cmd = "gcc -o solution solution.c && ./solution"
     else:
-        return {"error": "bad language"}, 400
+        return jsonify({"error": "bad language"}), 400
 
     my_config = {
         "image": "judger:latest",
         "command": ["/bin/bash", "-c", "sleep 600"],
         "mem_limit": "256m",
         "network_mode": "none",
-        "detach": True
+        "detach": True,
+        "tty": True
     }
 
     try:
         con = client.containers.create(**my_config)
         con.start()
         
+        # Write code to container
         stream = io.BytesIO()
         t = tarfile.open(fileobj=stream, mode='w')
-        
         b_code = code.encode('utf-8')
         info = tarfile.TarInfo(name=fname)
         info.size = len(b_code)
         t.addfile(info, io.BytesIO(b_code))
-        
-        b_input = stdin_data.encode('utf-8') if stdin_data else b""
-        info_in = tarfile.TarInfo(name="input.txt")
-        info_in.size = len(b_input)
-        t.addfile(info_in, io.BytesIO(b_input))
-        
         t.close()
         stream.seek(0)
         con.put_archive("/home/sandbox", stream)
-       
-        res = {"code": None, "msg": "", "is_tle": False}
-        
-        def run_thread():
-            try:
-                escaped_cmd = cmd.replace("'", "'\\''")
-                c, out = con.exec_run(
-                    cmd=f"/bin/bash -c '{escaped_cmd}'",
-                    workdir="/home/sandbox"
-                )
-                res["code"] = c
-                res["msg"] = out
-            except:
-                print("exec run failed")
 
-        worker = threading.Thread(target=run_thread)
-        worker.start()
+        escaped_cmd = cmd.replace("'", "'\\''")
+        exec_res = client.api.exec_create(
+            con.id,
+            f"/bin/bash -c '{escaped_cmd}'",
+            stdin=True,
+            stdout=True,
+            stderr=True,
+            tty=True,
+            workdir="/home/sandbox"
+        )
         
-        worker.join(timeout=60) # 60 seconds timeout
+        exec_id = exec_res['Id']
+        sock = client.api.exec_start(exec_id, socket=True)
+        sock_fd = sock._sock if hasattr(sock, '_sock') else sock
+        sock_fd.setblocking(False)
         
-        if worker.is_alive():
-            res["is_tle"] = True
-            try:
-                con.kill() 
-            except:
-                pass
-            worker.join()
-            con.remove(force=True)
-            redis_client.decr("exec:active")
-            return {
-                "status": "TLE", 
-                "output": "Time Limit Exceeded (60 seconds)", 
-                "exit_code": 124,
-                "execution_time": 60.0
-            }
-            
-        con.remove(force=True)
-        
-        execution_output = res["msg"].decode('utf-8') if res["msg"] else ""
-        
-        elapsed = time.time() - start_time
-        redis_client.decr("exec:active")
-        
-        return {
-            "status": "Success" if res["code"] == 0 else "Error",
-            "output": execution_output,
-            "exit_code": res["code"],
-            "execution_time": round(elapsed, 3)
+        sid = str(uuid.uuid4())
+        active_playground_sessions[sid] = {
+            "con": con,
+            "sock": sock_fd,
+            "exec_id": exec_id,
+            "is_tle": False,
+            "start_time": time.time()
         }
-
+        
+        # Start timeout killer thread
+        threading.Thread(target=playground_timeout_killer, args=(con, sid), daemon=True).start()
+        
+        return jsonify({"session_id": sid})
+        
     except Exception as e:
-        print("Docker Error:", e)
-        redis_client.decr("exec:active")
+        print("Playground start error:", e)
         try:
             con.remove(force=True)
         except:
             pass
-        return {"error": str(e)}
+        return jsonify({"error": str(e)}), 500
 
-@app.route("/api/v1/execute", methods=["POST"])
+@app.route("/api/v1/playground/poll/<sid>", methods=["GET"])
 @require_auth
-@limiter.limit("10/minute")
-def run_code():
-    data = request.json
-    lang = data["language"]
-    user_code = data["code"]
-    pid = data.get("problem_id", "")
-    user_id = g.user_id
-    
-    # Optional ad-hoc driver/test data
-    adhoc_driver = data.get("driver_code")
-    adhoc_test_data = data.get("test_data")
-    
-    print(f"Execution request: Lang={lang}, Problem={pid}, User={user_id}")
-
-    result = execute_code_in_docker(lang, user_code, pid, user_id, adhoc_driver, adhoc_test_data)
-    
-    if "error" in result:
-        return jsonify(result), 500 if "error" in result else 200
+def playground_poll(sid):
+    s = active_playground_sessions.get(sid)
+    if not s:
+        return jsonify({"error": "Session not found or expired"}), 404
         
-    return jsonify(result)
+    sock_fd = s["sock"]
+    output = ""
+    try:
+        # Read available bytes from the socket
+        while True:
+            ready = select.select([sock_fd], [], [], 0.0)
+            if ready[0]:
+                chunk = sock_fd.recv(4096)
+                if not chunk:
+                    break
+                output += chunk.decode('utf-8', errors='replace')
+            else:
+                break
+    except Exception as e:
+        pass
+        
+    try:
+        res = client.api.exec_inspect(s["exec_id"])
+        running = res['Running']
+        exit_code = res.get('ExitCode')
+    except Exception:
+        running = False
+        exit_code = -1
+        
+    if s["is_tle"]:
+        running = False
+        output += "\n\nError: Time Limit Exceeded (60 seconds)."
+        exit_code = 124
+        
+    if not running:
+        elapsed = round(time.time() - s["start_time"], 3)
+        try:
+            s["con"].remove(force=True)
+        except:
+            pass
+        if sid in active_playground_sessions:
+            del active_playground_sessions[sid]
+        return jsonify({
+            "output": output, 
+            "running": False, 
+            "exit_code": exit_code,
+            "execution_time": elapsed
+        })
+        
+    return jsonify({
+        "output": output,
+        "running": True
+    })
 
-@app.route("/api/v1/playground/execute", methods=["POST"])
+@app.route("/api/v1/playground/input/<sid>", methods=["POST"])
 @require_auth
-@limiter.limit("10/minute")
-def run_playground():
-    data = request.json
-    lang = data.get("language")
-    code = data.get("code")
-    stdin = data.get("stdin", "")
-    
-    if not code or not lang:
-        return jsonify({"error": "Missing language or code"}), 400
-
-    result = execute_playground_in_docker(lang, code, stdin)
-    
-    if "error" in result:
-        return jsonify(result), 500
+def playground_input(sid):
+    s = active_playground_sessions.get(sid)
+    if not s:
+        return jsonify({"error": "Session not found"}), 404
         
-    return jsonify(result)
+    val = request.json.get("input", "")
+    try:
+        # TTY mode requires \n explicitly to register input
+        if not val.endswith('\n'):
+            val += '\n'
+        s["sock"].send(val.encode('utf-8'))
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/v1/submit", methods=["POST"])
 @require_auth
