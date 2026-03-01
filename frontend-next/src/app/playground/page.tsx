@@ -108,7 +108,8 @@ export default function PlaygroundPage() {
           .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "") // ANSI escape sequences
           .replace(/\x1b\].*?(\x07|\x1b\\)/g, "") // OSC sequences
           .replace(/\r/g, "") // carriage returns
-          .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, ""); // other control chars
+          .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "") // other control chars
+          .replace(/\uFFFD/g, ""); // Unicode replacement char from invalid TTY bytes
         setOutput((prev) => prev + cleanOutput);
       }
 
