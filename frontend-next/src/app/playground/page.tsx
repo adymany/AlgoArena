@@ -105,11 +105,16 @@ export default function PlaygroundPage() {
         // 2. Carriage returns
         // 3. Any remaining non-printable chars (except newline \n and tab \t)
         const cleanOutput = data.output
-          .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "") // ANSI escape sequences
-          .replace(/\x1b\].*?(\x07|\x1b\\)/g, "") // OSC sequences
-          .replace(/\r/g, "") // carriage returns
-          .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "") // other control chars
-          .replace(/\uFFFD/g, ""); // Unicode replacement char from invalid TTY bytes
+          // 1. ANSI CSI escapes (handles Bracketed Paste 'l', 'h', Cursor moves)
+          .replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, "")
+          // 2. OSC sequences
+          .replace(/\x1b\].*?(\x07|\x1b\\)/g, "")
+          // 3. Carriage returns
+          .replace(/\r/g, "")
+          // 4. Other control chars
+          .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "")
+          // 5. Unicode replacement char from invalid TTY bytes
+          .replace(/\uFFFD/g, "");
         setOutput((prev) => prev + cleanOutput);
       }
 

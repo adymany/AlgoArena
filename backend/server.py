@@ -1706,7 +1706,7 @@ def playground_start():
         escaped_cmd = cmd.replace("'", "'\\''")
         exec_res = client.api.exec_create(
             con.id,
-            f"/bin/bash -c '{escaped_cmd}'",
+            f"env TERM=dumb PYTHONUNBUFFERED=1 /bin/bash -c '{escaped_cmd}'",
             stdin=True,
             stdout=True,
             stderr=True,
