@@ -1645,8 +1645,8 @@ def run_code():
 active_playground_sessions = {}
 
 def playground_timeout_killer(con, sid):
-    # Enforces a 10 minute timeout limit for playground sessions
-    time.sleep(600.0)
+    # Enforces a 1 minute timeout limit for playground sessions
+    time.sleep(60.0)
     if sid in active_playground_sessions:
         active_playground_sessions[sid]["is_tle"] = True
         try:
@@ -1681,7 +1681,7 @@ def playground_start():
 
     my_config = {
         "image": "judger:latest",
-        "command": ["/bin/bash", "-c", "sleep 600"],
+        "command": ["/bin/bash", "-c", "sleep 120"],
         "mem_limit": "64m",
         "network_mode": "none",
         "detach": True,
@@ -1774,7 +1774,7 @@ def playground_poll(sid):
         
     if s["is_tle"]:
         running = False
-        output += "\n\nError: Time Limit Exceeded (10 minutes)."
+        output += "\n\nError: Time Limit Exceeded (1 minute)."
         exit_code = 124
         
     if not running:
@@ -1948,7 +1948,7 @@ def cleanup_orphaned_containers():
                         from datetime import datetime, timezone
                         created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
                         age = (datetime.now(timezone.utc) - created_dt).total_seconds()
-                        if age > 600:  # 10 minutes
+                        if age > 120:  # 2 minutes
                             print(f"Cleaning orphaned container {con.short_id} (age: {int(age)}s)")
                             con.remove(force=True)
         except Exception as e:
