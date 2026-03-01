@@ -842,6 +842,62 @@ F(n) = F(n - 1) + F(n - 2), for n > 1.
 """, "Easy", json.dumps({
     "python": "class Solution:\n    def reverseString(self, s):\n        \"\"\"\n        Do not return anything, modify s in-place instead.\n        \"\"\"\n        ",
     "cpp": "class Solution {\npublic:\n    void reverseString(vector<char>& s) {\n        \n    }\n};"
+})),
+
+        ("climbing_stairs", "Climbing Stairs", """
+<p>You are climbing a staircase. It takes <code>n</code> steps to reach the top.</p>
+<p>Each time you can either climb <code>1</code> or <code>2</code> steps. In how many distinct ways can you climb to the top?</p>
+
+<div class="example-box">
+    <div class="example-title">Example 1:</div>
+    <p><span class="example-label">Input:</span> n = 2</p>
+    <p><span class="example-label">Output:</span> 2</p>
+    <p style="color: #64748b; font-size: 0.85em;">Explanation: There are two ways to climb to the top. 1 step + 1 step, or 2 steps.</p>
+</div>
+
+<div class="example-box">
+    <div class="example-title">Example 2:</div>
+    <p><span class="example-label">Input:</span> n = 3</p>
+    <p><span class="example-label">Output:</span> 3</p>
+    <p style="color: #64748b; font-size: 0.85em;">Explanation: There are three ways to climb to the top. 1+1+1, 1+2, or 2+1.</p>
+</div>
+""", "Easy", json.dumps({
+    "python": "class Solution:\n    def climbStairs(self, n: int) -> int:\n        ",
+    "cpp": "class Solution {\npublic:\n    int climbStairs(int n) {\n        \n    }\n};"
+})),
+
+        ("find-first-occurrence", "Find First Occurrence", """
+<p>Given an array of integers <code>nums</code> and an integer <code>target</code>, find the index of the <strong>first occurrence</strong> of <code>target</code> in <code>nums</code>.</p>
+<p>If the target does not exist in the array, return <code>-1</code>.</p>
+
+<div class="example-box">
+    <div class="example-title">Example 1:</div>
+    <p><span class="example-label">Input:</span> nums = [1,5,3,5,2], target = 5</p>
+    <p><span class="example-label">Output:</span> 1</p>
+</div>
+
+<div class="example-box">
+    <div class="example-title">Example 2:</div>
+    <p><span class="example-label">Input:</span> nums = [10,20,30,40], target = 25</p>
+    <p><span class="example-label">Output:</span> -1</p>
+</div>
+""", "Medium", json.dumps({
+    "python": "class Solution:\n    def findFirstOccurrence(self, nums, target):\n        ",
+    "cpp": "class Solution {\npublic:\n    int findFirstOccurrence(vector<int>& nums, int target) {\n        \n    }\n};"
+})),
+
+        ("maximum_subarray", "Maximum Subarray", """
+<p>Given an integer array <code>nums</code>, find the contiguous subarray (containing at least one number) which has the largest sum and return its sum.</p>
+
+<div class="example-box">
+    <div class="example-title">Example 1:</div>
+    <p><span class="example-label">Input:</span> nums = [-2,1,-3,4,-1,2,1,-5,4]</p>
+    <p><span class="example-label">Output:</span> 6</p>
+    <p style="color: #64748b; font-size: 0.85em;">Explanation: [4,-1,2,1] has the largest sum = 6.</p>
+</div>
+""", "Medium", json.dumps({
+    "python": "class Solution:\n    def maxSubArray(self, nums):\n        ",
+    "cpp": "class Solution {\npublic:\n    int maxSubArray(vector<int>& nums) {\n        \n    }\n};"
 }))
     ]
     
