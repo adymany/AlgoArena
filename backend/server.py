@@ -40,6 +40,10 @@ CORS(app, origins=[
 
 client = docker.from_env()
 
+# --- Execution Concurrency Limiter ---
+# Only allow 3 Docker containers at once to prevent OOM on t2.micro (1GB RAM)
+EXEC_SEMAPHORE = threading.Semaphore(3)
+
 # --- JWT Config ---
 JWT_SECRET = os.getenv("JWT_SECRET")
 if not JWT_SECRET:
@@ -1386,6 +1390,17 @@ def simplify_error_message(raw_output, lang):
 
 # Helper: Execute code in Docker
 def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=None, adhoc_test_data=None):
+    # Wait for a slot (max 3 concurrent executions)
+    acquired = EXEC_SEMAPHORE.acquire(timeout=15)
+    if not acquired:
+        return {"error": "Server busy. Too many executions running. Please try again in a few seconds.", "status": "Queued"}
+    
+    try:
+        return _execute_code_in_docker_inner(lang, code, problem_id, user_id, adhoc_driver, adhoc_test_data)
+    finally:
+        EXEC_SEMAPHORE.release()
+
+def _execute_code_in_docker_inner(lang, code, problem_id, user_id=None, adhoc_driver=None, adhoc_test_data=None):
     # Track execution in Redis for monitoring
     redis_client.incr("exec:active")
     redis_client.incr("exec:total")
@@ -1412,7 +1427,7 @@ def execute_code_in_docker(lang, code, problem_id, user_id=None, adhoc_driver=No
     my_config = {
         "image": "judger:latest",
         "command": ["/bin/bash", "-c", "sleep 600"],
-        "mem_limit": "128m",
+        "mem_limit": "64m",
         "network_mode": "none",
         "detach": True
     }
@@ -1611,7 +1626,7 @@ def playground_start():
     my_config = {
         "image": "judger:latest",
         "command": ["/bin/bash", "-c", "sleep 600"],
-        "mem_limit": "256m",
+        "mem_limit": "64m",
         "network_mode": "none",
         "detach": True,
         "tty": True
@@ -1862,6 +1877,29 @@ def save_chat_history():
         return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
+
+# --- Orphaned Container Cleanup Thread ---
+def cleanup_orphaned_containers():
+    """Periodically kill Docker containers older than 10 minutes to prevent RAM leaks."""
+    while True:
+        time.sleep(60)
+        try:
+            for con in client.containers.list():
+                # Only clean up judger containers
+                if con.image.tags and "judger:latest" in con.image.tags:
+                    created = con.attrs.get("Created", "")
+                    if created:
+                        from datetime import datetime, timezone
+                        created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                        age = (datetime.now(timezone.utc) - created_dt).total_seconds()
+                        if age > 600:  # 10 minutes
+                            print(f"Cleaning orphaned container {con.short_id} (age: {int(age)}s)")
+                            con.remove(force=True)
+        except Exception as e:
+            pass  # Silently handle any Docker API errors
+
+cleanup_thread = threading.Thread(target=cleanup_orphaned_containers, daemon=True)
+cleanup_thread.start()
 
 print("Server starting on 9000...")
 app.run(host="0.0.0.0", port=9000)
