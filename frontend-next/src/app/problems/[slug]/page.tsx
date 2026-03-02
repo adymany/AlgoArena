@@ -117,16 +117,20 @@ export default function ProblemDetailPage() {
       !isRunning &&
       !isSubmitting
     ) {
-      const inputRegex =
-        /<span class="example-label">Input:<\/span>\s*(.*?)<\/p>/g;
-      const outputRegex =
-        /<span class="example-label">Output:<\/span>\s*(.*?)<\/p>/g;
+      // Safely strip HTML: replace block/break tags with newlines first to prevent merging text
+      const cleanDesc = problem.description
+        .replace(/<br\s*[\/]?>/gi, "\n")
+        .replace(/<\/div>|<\/p>|<\/li>/gi, "\n")
+        .replace(/<[^>]*>?/gm, "");
 
-      const inputs = [...problem.description.matchAll(inputRegex)].map((m) =>
-        m[1].replace(/<\/?[^>]+(>|$)/g, "").trim(),
+      const inputRegex = /Input:\s*(.*?)(?=\n|$)/gi;
+      const outputRegex = /Output:\s*(.*?)(?=\n|$)/gi;
+
+      const inputs = [...cleanDesc.matchAll(inputRegex)].map((m) =>
+        m[1].trim(),
       );
-      const outputs = [...problem.description.matchAll(outputRegex)].map((m) =>
-        m[1].replace(/<\/?[^>]+(>|$)/g, "").trim(),
+      const outputs = [...cleanDesc.matchAll(outputRegex)].map((m) =>
+        m[1].trim(),
       );
 
       if (inputs.length > 0 && inputs.length === outputs.length) {
