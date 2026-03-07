@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
-import { getApiBase, fetchJSON, authHeaders } from "@/lib/api";
+import { getApiBase, fetchJSON, authHeaders, authFetch } from "@/lib/api";
 
 interface Message {
   role: "user" | "assistant";
@@ -72,7 +72,7 @@ export default function AISidebar({
   // Save chat to DB
   const saveChatToDB = useCallback(
     (newHistory: Message[]) => {
-      fetch(`${getApiBase()}/api/v1/chat/save`, {
+      authFetch(`${getApiBase()}/api/v1/chat/save`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({

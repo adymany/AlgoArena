@@ -48,11 +48,38 @@ export function authHeaders(
   return headers;
 }
 
+/* ── Session expiry handling ── */
+
+// Prevent multiple simultaneous redirects
+let isRedirecting = false;
+
+/**
+ * Clear all auth credentials from localStorage and redirect to login.
+ * Called automatically whenever a 401 response is detected from the backend,
+ * meaning the JWT token has expired or been revoked.
+ */
+export function handleSessionExpired(): void {
+  if (typeof window === "undefined") return;
+  if (isRedirecting) return; // already handling it
+  isRedirecting = true;
+
+  localStorage.removeItem("user_id");
+  localStorage.removeItem("username");
+  localStorage.removeItem("is_admin");
+  localStorage.removeItem("token");
+
+  // Redirect to login — using window.location ensures a full navigation
+  // (works even outside React component tree / router context)
+  window.location.href = "/login?expired=1";
+}
+
 /**
  * Safe wrapper around fetch that guarantees a JSON result.
  * Automatically includes the JWT Authorization header when available.
  * Returns `null` when the response is not OK or not valid JSON
  * (e.g. the backend is down and Next.js serves its own HTML page).
+ *
+ * **401 responses automatically trigger session expiry → redirect to login.**
  */
 export async function fetchJSON<T = unknown>(
   url: string,
@@ -73,6 +100,10 @@ export async function fetchJSON<T = unknown>(
       },
     };
     const res = await fetch(url, mergedInit);
+    if (res.status === 401) {
+      handleSessionExpired();
+      return null;
+    }
     if (!res.ok) return null;
     const ct = res.headers.get("content-type") || "";
     if (!ct.includes("application/json")) return null;
@@ -80,4 +111,22 @@ export async function fetchJSON<T = unknown>(
   } catch {
     return null;
   }
+}
+
+/**
+ * Wrapper around the native fetch that automatically handles 401 session expiry.
+ * Use this instead of raw `fetch()` for any authenticated API calls.
+ * This does NOT parse JSON — use the response as you normally would with fetch.
+ *
+ * **401 responses automatically trigger session expiry → redirect to login.**
+ */
+export async function authFetch(
+  url: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const res = await fetch(url, init);
+  if (res.status === 401) {
+    handleSessionExpired();
+  }
+  return res;
 }

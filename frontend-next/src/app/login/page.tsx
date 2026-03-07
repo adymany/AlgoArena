@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { getApiBase } from "@/lib/api";
 import Navbar from "@/components/Navbar";
 
-export default function LoginPage() {
+function LoginPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const sessionExpired = searchParams.get("expired") === "1";
   const [authChecked, setAuthChecked] = useState(false);
   const [activeTab, setActiveTab] = useState<"login" | "register">("login");
   const [showPw, setShowPw] = useState(false);
@@ -174,6 +176,18 @@ export default function LoginPage() {
               </button>
             </div>
 
+            {sessionExpired && (
+              <div
+                className="login-error-msg"
+                style={{
+                  background: "rgba(251,191,36,0.12)",
+                  borderColor: "var(--warning)",
+                  color: "var(--warning)",
+                }}
+              >
+                ⏱ Your session has expired. Please sign in again.
+              </div>
+            )}
             {error && <div className="login-error-msg">{error}</div>}
             {success && <div className="login-success-msg">{success}</div>}
 
@@ -345,5 +359,13 @@ export default function LoginPage() {
         </div>
       </div>
     </>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginPageContent />
+    </Suspense>
   );
 }

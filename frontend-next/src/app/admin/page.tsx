@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getApiBase, fetchJSON, authHeaders } from "@/lib/api";
+import { getApiBase, fetchJSON, authHeaders, authFetch } from "@/lib/api";
 import Navbar from "@/components/Navbar";
 
 import { showToast } from "@/components/Toast";
@@ -108,11 +108,14 @@ export default function AdminPage() {
 
   const toggleUserAdmin = async (userId: number, currentStatus: boolean) => {
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/admin/users/${userId}`, {
-        method: "PUT",
-        headers: authHeaders(),
-        body: JSON.stringify({ is_admin: !currentStatus }),
-      });
+      const res = await authFetch(
+        `${getApiBase()}/api/v1/admin/users/${userId}`,
+        {
+          method: "PUT",
+          headers: authHeaders(),
+          body: JSON.stringify({ is_admin: !currentStatus }),
+        },
+      );
       if (res.ok) {
         showToast(`User privileges updated`, "success");
         fetchStats();
@@ -135,10 +138,13 @@ export default function AdminPage() {
     )
       return;
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/admin/users/${userId}`, {
-        method: "DELETE",
-        headers: authHeaders(),
-      });
+      const res = await authFetch(
+        `${getApiBase()}/api/v1/admin/users/${userId}`,
+        {
+          method: "DELETE",
+          headers: authHeaders(),
+        },
+      );
       if (res.ok) {
         showToast(`User deleted`, "success");
         fetchStats();
@@ -222,7 +228,7 @@ export default function AdminPage() {
     if (!confirm(`Delete "${formData.title}"?`)) return;
     setLoading(true);
     try {
-      const res = await fetch(
+      const res = await authFetch(
         `${getApiBase()}/api/v1/admin/problems/${formData.slug}`,
         { method: "DELETE", headers: authHeaders() },
       );
@@ -250,7 +256,7 @@ export default function AdminPage() {
     const method = viewMode === "create" ? "POST" : "PUT";
 
     try {
-      const res = await fetch(url, {
+      const res = await authFetch(url, {
         method,
         headers: authHeaders(),
         body: JSON.stringify(formData),
@@ -461,7 +467,7 @@ CRITICAL RULES:
     setMessage("");
 
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/execute`, {
+      const res = await authFetch(`${getApiBase()}/api/v1/execute`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({

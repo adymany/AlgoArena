@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getApiBase, fetchJSON, authHeaders } from "@/lib/api";
+import { getApiBase, fetchJSON, authHeaders, authFetch } from "@/lib/api";
 import { ThemeToggle } from "@/components/ThemeSelector";
 
 export default function Navbar() {

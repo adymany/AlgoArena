@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import MonacoWebpackPlugin from "monaco-editor-webpack-plugin";
 
 const nextConfig: NextConfig = {
   turbopack: {},
@@ -19,6 +20,15 @@ const nextConfig: NextConfig = {
         fs: false,
         path: false,
       };
+
+      // Bundle Monaco Editor workers locally instead of relying on CDN
+      config.plugins.push(
+        new MonacoWebpackPlugin({
+          // Only include languages you actually use to reduce bundle size
+          languages: ["python", "cpp", "javascript", "typescript"],
+          filename: "static/[name].worker.js",
+        }),
+      );
     }
     return config;
   },

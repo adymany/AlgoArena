@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import dynamic from "next/dynamic";
-import { getApiBase, authHeaders } from "@/lib/api";
+import { getApiBase, authHeaders, authFetch } from "@/lib/api";
 import Navbar from "@/components/Navbar";
 
 const CodeEditor = dynamic(() => import("@/components/CodeEditor"), {
@@ -93,9 +93,12 @@ export default function PlaygroundPage() {
 
   const pollTerminal = async (sid: string) => {
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/playground/poll/${sid}`, {
-        headers: authHeaders(),
-      });
+      const res = await authFetch(
+        `${getApiBase()}/api/v1/playground/poll/${sid}`,
+        {
+          headers: authHeaders(),
+        },
+      );
       if (!res.ok) throw new Error("poll failed");
       const data = await res.json();
 
@@ -147,7 +150,7 @@ export default function PlaygroundPage() {
     setTerminalInput("");
 
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/playground/start`, {
+      const res = await authFetch(`${getApiBase()}/api/v1/playground/start`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -181,11 +184,14 @@ export default function PlaygroundPage() {
       setTerminalInput(""); // Reset input box
 
       try {
-        await fetch(`${getApiBase()}/api/v1/playground/input/${sessionId}`, {
-          method: "POST",
-          headers: authHeaders(),
-          body: JSON.stringify({ input: val }),
-        });
+        await authFetch(
+          `${getApiBase()}/api/v1/playground/input/${sessionId}`,
+          {
+            method: "POST",
+            headers: authHeaders(),
+            body: JSON.stringify({ input: val }),
+          },
+        );
       } catch (e) {
         console.error("Failed to send input", e);
       }

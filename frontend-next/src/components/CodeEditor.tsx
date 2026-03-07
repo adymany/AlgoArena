@@ -1,11 +1,13 @@
 "use client";
 
-import Editor, { type Monaco } from "@monaco-editor/react";
+import Editor, { loader, type Monaco } from "@monaco-editor/react";
+import * as monaco from "monaco-editor";
 import { useEffect, useState, useRef } from "react";
 
-// Monaco is automatically loaded via CDN by @monaco-editor/react.
-// Relying on the default internal loader resolves Next.js Webpack stuck-on-loading issues
-// and ensures the version strictly matches the wrapper.
+// Use locally bundled monaco-editor (via monaco-editor-webpack-plugin)
+// instead of CDN loading — this prevents the "stuck on loading" issue
+// caused by CDN fetch failures or Webpack interfering with dynamic script loading.
+loader.config({ monaco });
 
 /* ── Monaco theme definitions keyed by app theme id ── */
 const MONACO_THEMES: Record<

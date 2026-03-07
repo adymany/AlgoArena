@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import { getApiBase, fetchJSON, authHeaders } from "@/lib/api";
+import { getApiBase, fetchJSON, authHeaders, authFetch } from "@/lib/api";
 import Navbar from "@/components/Navbar";
 import AISidebarSkeleton from "@/components/AISidebarSkeleton";
 
@@ -170,7 +170,7 @@ export default function ProblemDetailPage() {
     setTestCases([]);
     setRawOutput("");
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/execute`, {
+      const res = await authFetch(`${getApiBase()}/api/v1/execute`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -180,8 +180,6 @@ export default function ProblemDetailPage() {
         }),
       });
       if (!res.ok) {
-        if (res.status === 401)
-          throw new Error("Session expired. Please log in again.");
         if (res.status === 429)
           throw new Error("Too many requests. Please slow down.");
         throw new Error("Server or Docker error occurred. Try again.");
@@ -204,7 +202,7 @@ export default function ProblemDetailPage() {
     setTestCases([]);
     setRawOutput("");
     try {
-      const res = await fetch(`${getApiBase()}/api/v1/submit`, {
+      const res = await authFetch(`${getApiBase()}/api/v1/submit`, {
         method: "POST",
         headers: authHeaders(),
         body: JSON.stringify({
@@ -214,8 +212,6 @@ export default function ProblemDetailPage() {
         }),
       });
       if (!res.ok) {
-        if (res.status === 401)
-          throw new Error("Session expired. Please log in again.");
         if (res.status === 429)
           throw new Error("Too many requests. Please slow down.");
         throw new Error("Server or Docker error occurred. Try again.");
