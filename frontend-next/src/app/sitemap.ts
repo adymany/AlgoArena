@@ -9,7 +9,7 @@ interface Problem {
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://algoarena.com';
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://algoarena.adnantabrezi.me';
   
   // Base routes for the application
   const routes: MetadataRoute.Sitemap = [
