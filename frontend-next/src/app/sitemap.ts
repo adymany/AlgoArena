@@ -46,9 +46,8 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   ];
 
   try {
-    // Fetch all problems dynamically
-    // getApiBase() falls back to http://localhost:9000 during SSR
-    const res = await fetch(`${getApiBase()}/api/v1/problems`, {
+    // Fetch all problems dynamically from the actual production url, not SSR localhost fallback
+    const res = await fetch(`${baseUrl}/api/v1/problems`, {
       next: { revalidate: 3600 } // Revalidate this API response every hour
     });
     
