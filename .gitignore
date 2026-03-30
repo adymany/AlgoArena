@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Next.js
+frontend-next/.next/
+frontend-next/out/
+frontend-next/.vercel
+
+# TypeScript
+*.tsbuildinfo
+frontend-next/next-env.d.ts
+
+# Docker
+*.pem
+
+# macOS
+.DS_Store
+
+# Editor
+.vscode/settings.json
